@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sanctuaire · Test 1 · Model finder</title>
+<style>
+  :root { --bg:#eef1f5; --panel:#fff; --ink:#1b2430; --muted:#5b6676; --line:#d5dbe3; --accent:#2f6f8f; --good:#2f7d5b; --bad:#b4452f; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width:42rem; margin:0 auto; padding:1rem 1rem 4rem; }
+  h1 { font-size:1.4rem; margin:1rem 0 .25rem; }
+  p { margin:.4rem 0; }
+  .muted { color:var(--muted); font-size:.92rem; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:1rem; margin-top:1rem; }
+  button { font:inherit; min-height:2.75rem; padding:.5rem 1rem; border-radius:8px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; }
+  button.secondary { background:#fff; color:var(--accent); }
+  button:disabled { opacity:.5; }
+  button:focus-visible { outline:3px solid #f0b429; outline-offset:2px; }
+  .row { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.75rem; }
+  .step { border-left:4px solid var(--line); padding:.3rem .7rem; margin:.5rem 0; }
+  .step.ok { border-color:var(--good); }
+  .step.fail { border-color:var(--bad); }
+  .step b { display:block; }
+  pre { background:#f8fafc; border:1px solid var(--line); border-radius:8px; padding:.7rem; overflow:auto; font-size:.8rem; max-height:22rem; white-space:pre-wrap; overflow-wrap:anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Model finder</h1>
+  <p class="muted">This page only looks. It checks where the current English and French translation models can be found, and whether this browser is allowed to download them. It downloads a few bytes of each file, not the whole files. Nothing you type anywhere is sent.</p>
+  <div class="row"><button id="run" type="button">Check the sources</button></div>
+
+  <section aria-live="polite">
+    <div id="steps"></div>
+  </section>
+
+  <section>
+    <p><b>Report</b> <span class="muted">Copy this and paste it into the chat.</span></p>
+    <pre id="report">Nothing yet.</pre>
+    <div class="row">
+      <button id="copy" type="button" class="secondary" disabled>Copy report</button>
+    </div>
+    <p class="muted" id="copied" role="status"></p>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const HF = 'https://huggingface.co/TranslateInPlace/translate-in-place-models/resolve/main';
+const RS = 'https://firefox.settings.services.mozilla.com/v1/buckets/main/collections/translations-models-v2/records';
+const CDN = 'https://firefox-settings-attachments.cdn.mozilla.net';
+const lines = [];
+
+function log(text) { lines.push(text); $('report').textContent = lines.join('\n'); $('copy').disabled = false; }
+function step(title) {
+  const d = document.createElement('div');
+  d.className = 'step';
+  const b = document.createElement('b'); b.textContent = title;
+  const t = document.createElement('span'); t.textContent = 'Working…';
+  d.append(b, t); $('steps').append(d);
+  return {
+    ok(msg) { d.className = 'step ok'; t.textContent = msg; log(`[OK] ${title}: ${msg}`); },
+    fail(msg) { d.className = 'step fail'; t.textContent = msg; log(`[FAIL] ${title}: ${msg}`); },
+  };
+}
+
+const pick = (r, ...keys) => { for (const k of keys) if (r[k] !== undefined && r[k] !== null) return r[k]; };
+function describe(r) {
+  const att = r.attachment || {};
+  return {
+    name: pick(r, 'name', 'filename') ?? att.filename,
+    fileType: pick(r, 'fileType', 'type'),
+    from: pick(r, 'sourceLanguage', 'fromLang', 'from', 'source'),
+    to: pick(r, 'targetLanguage', 'toLang', 'to', 'target'),
+    version: pick(r, 'version'),
+    variant: pick(r, 'variant'),
+    location: att.location,
+    size: att.size,
+    hash: att.hash,
+    keys: Object.keys(r).join(','),
+  };
+}
+function wanted(d) {
+  const pairFromName = (d.name || '').match(/\.(enfr|fren)\./);
+  const f = d.from && d.to ? `${d.from}${d.to}`.toLowerCase() : (pairFromName ? pairFromName[1] : '');
+  return f === 'enfr' || f === 'fren';
+}
+function versionKey(v) { return String(v || '0').split('.').map((x) => String(parseInt(x, 10) || 0).padStart(4, '0')).join('.'); }
+function newest(descs) {
+  const best = {};
+  for (const d of descs) {
+    const pair = (d.name || '').match(/\.(enfr|fren)\./)?.[1] || `${d.from}${d.to}`;
+    const key = `${pair}:${d.fileType}`;
+    if (!best[key] || versionKey(d.version) > versionKey(best[key].version)) best[key] = d;
+  }
+  return Object.values(best);
+}
+
+async function jsonFrom(url) {
+  const res = await fetch(url, { credentials: 'omit' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
+async function rangeTest(url) {
+  const res = await fetch(url, { credentials: 'omit', headers: { Range: 'bytes=0-1023' } });
+  if (!(res.ok || res.status === 206)) throw new Error(`HTTP ${res.status}`);
+  const buf = new Uint8Array(await res.arrayBuffer());
+  const head = Array.from(buf.slice(0, 4)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+  return `HTTP ${res.status}, got ${buf.length} bytes, first bytes: ${head}`;
+}
+
+async function main() {
+  $('run').disabled = true;
+  $('steps').textContent = '';
+  lines.length = 0;
+  log(`Model finder report ${new Date().toISOString()}`);
+  log(`Browser: ${navigator.userAgent}`);
+  log(`DecompressionStream gzip: ${typeof DecompressionStream !== 'undefined'}`);
+
+  let hfDescs = [], rsDescs = [];
+
+  let s = step('1. Hugging Face mirror: list of models (records.json)');
+  try {
+    const data = await jsonFrom(`${HF}/records.json`);
+    const arr = Array.isArray(data) ? data : (data.data || data.records || []);
+    const all = arr.map(describe);
+    hfDescs = newest(all.filter(wanted));
+    s.ok(`${arr.length} records in total, ${hfDescs.length} newest files for English and French found.`);
+    if (arr.length) log('First record keys: ' + describe(arr[0]).keys);
+  } catch (e) { s.fail(e.message + ' (the browser may be blocking it, or the file is not there)'); }
+
+  s = step('2. Mozilla Remote Settings: list of models');
+  try {
+    const data = await jsonFrom(`${RS}?_limit=2000`);
+    const arr = data.data || [];
+    const all = arr.map(describe);
+    rsDescs = newest(all.filter(wanted));
+    s.ok(`${arr.length} records in total, ${rsDescs.length} newest files for English and French found.`);
+    if (arr.length) log('First record keys: ' + describe(arr[0]).keys);
+  } catch (e) { s.fail(e.message + ' (the browser may be blocking it)'); }
+
+  const show = (label, descs) => {
+    log(`--- ${label}: English and French files (newest versions)`);
+    for (const d of descs) log(`${d.name} | type ${d.fileType} | ${d.from}->${d.to} | version ${d.version} | ${d.size} bytes | ${d.location}`);
+  };
+  if (hfDescs.length) show('Hugging Face mirror', hfDescs);
+  if (rsDescs.length) show('Mozilla Remote Settings', rsDescs);
+
+  const sample = (hfDescs.find((d) => d.fileType === 'model') || rsDescs.find((d) => d.fileType === 'model'));
+  if (sample && sample.location) {
+    if (hfDescs.length) {
+      s = step('3. Can this browser download a model from the Hugging Face mirror?');
+      try { s.ok(await rangeTest(`${HF}/${sample.location}`)); } catch (e) { s.fail(e.message); }
+    }
+    s = step('4. Can this browser download a model from Mozilla\'s own file server?');
+    try { s.ok(await rangeTest(`${CDN}/${sample.location}`)); } catch (e) { s.fail(e.message + ' (this is expected if the server does not allow other websites)'); }
+  } else {
+    s = step('3. Download test');
+    s.fail('No model record with a file location was found, so nothing to test.');
+  }
+  log('Done.');
+  $('run').disabled = false;
+}
+
+$('run').addEventListener('click', main);
+$('copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(lines.join('\n')); $('copied').textContent = 'Copied. Paste it into the chat.'; }
+  catch { $('copied').textContent = 'Could not copy. Select the text above and copy it by hand.'; }
+});
+</script>
+</body>
+</html>
