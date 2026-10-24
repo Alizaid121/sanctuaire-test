@@ -67,12 +67,10 @@
   }
   .row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
   .row > * { flex: 1 1 auto; }
-  .choice { display: flex; gap: 0.6rem; align-items: flex-start; font-weight: 400; margin: 0.4rem 0; }
-  .choice input { margin-top: 0.3rem; }
-  .status { margin-top: 0.75rem; padding: 0.6rem 0.75rem; border-radius: 8px; background: #f3f6f9; border: 1px solid var(--line); }
+  .status { margin-top: 0.75rem; padding: 0.6rem 0.75rem; border-radius: 8px; background: #f3f6f9; border: 1px solid var(--line); overflow-wrap: anywhere; }
   .status.ok { border-color: var(--good); color: var(--good); }
   .status.err { border-color: var(--bad); color: var(--bad); }
-  .files { margin-top: 0.75rem; display: grid; gap: 0.4rem; }
+  .files { margin-top: 0.75rem; display: grid; gap: 0.5rem; }
   .file { display: grid; grid-template-columns: 1fr; gap: 0.15rem; font-size: 0.9rem; }
   .file progress { width: 100%; height: 0.6rem; }
   .muted { color: var(--muted); font-size: 0.9rem; }
@@ -115,18 +113,18 @@
 <main>
   <header>
     <h1>Test 1: does on-device translation read well enough?</h1>
-    <p class="lead">Translation runs inside this page, on your phone. The sentences you type are not sent anywhere. Only the model files are downloaded, once, from Mozilla's public repository.</p>
+    <p class="lead">Translation runs inside this page, on your phone. The sentences you type are not sent anywhere. Only the model files are downloaded, once.</p>
     <p class="lead">Test 1 : la traduction se fait sur votre téléphone. Vos phrases ne sont envoyées nulle part.</p>
   </header>
 
   <section id="s-load" aria-labelledby="h-load">
     <h2 id="h-load">Step 1. Prepare the translation models</h2>
-    <p class="muted">This downloads English to French and French to English models. Expect roughly 60 to 90 MB in total on the best tier. Use Wi-Fi if you can.</p>
+    <p class="muted">This downloads Mozilla's current English to French and French to English models (version 3.0). Each is about 23 MB compressed and larger once unpacked. Use Wi-Fi if you can.</p>
 
-    <label for="tier">Model tier</label>
-    <select id="tier">
-      <option value="base-memory">Best available (base-memory, about 30 MB per direction)</option>
-      <option value="tiny">Smaller and faster (tiny, about 17 MB per direction)</option>
+    <label for="engine">Engine build</label>
+    <select id="engine">
+      <option value="engine2">Newer build 0.4.16 (try this first)</option>
+      <option value="engine">Official build 0.4.9</option>
     </select>
 
     <label for="beam">Search mode</label>
@@ -142,10 +140,10 @@
     <div id="status" class="status" role="status" aria-live="polite">Not started.</div>
 
     <details id="manual">
-      <summary>If the download fails: choose the files yourself</summary>
-      <p class="muted">Tap each link to save the file on this phone, then choose all eight files below. The files are large; the model files are the big ones.</p>
+      <summary>Optional: add the word-list files, or choose files yourself</summary>
+      <p class="muted">Each direction also has a small "word list" file that makes translation faster. Mozilla's server does not let a web page fetch them, so they have to come from this site. Tap each link below to save the file on your computer, then upload both files, without renaming them, to the same repository folder as this page.</p>
       <ul class="links" id="links"></ul>
-      <label for="pick">Choose the downloaded files</label>
+      <p class="muted">Or choose files by hand (any of the six, named model.…, lex.… or vocab.…, unpacked or compressed):</p>
       <input id="pick" type="file" multiple>
       <div class="row">
         <button id="usefiles" type="button" class="secondary">Use these files</button>
@@ -223,17 +221,25 @@
 </main>
 
 <script type="module">
-import { LatencyOptimisedTranslator, TranslatorBacking } from './engine/translator.js';
+import { decompress as zstdDecompress } from './vendor/fzstd.mjs';
 
 const $ = (id) => document.getElementById(id);
-const MIRROR = 'https://github.com/mozilla/firefox-translations-models';
+const HF = 'https://huggingface.co/TranslateInPlace/translate-in-place-models/resolve/main';
+const CDN = 'https://firefox-settings-attachments.cdn.mozilla.net';
 const LOG_KEY = 'sanctuaire-test1-log-v1';
+
+// The word-list ("lex") files are listed by Mozilla's Remote Settings but cannot be fetched by a web page.
+// Locations come from the model finder report of 23 October 2026.
+const LEX = {
+  enfr: { name: 'lex.50.50.enfr.s2t.bin', location: 'main-workspace/translations-models-v2/bff0d10a-d07a-4873-a5a7-a6b7af42bf86.zst' },
+  fren: { name: 'lex.50.50.fren.s2t.bin', location: 'main-workspace/translations-models-v2/7238348a-b118-40f8-9e17-327fb54b2dc8.zst' },
+};
 
 // ---------- state ----------
 const state = {
   translator: null,
   ready: false,
-  tier: 'base-memory',
+  engineKind: 'engine2',
   beam: 1,
   prepSeconds: null,
   warmMs: null,
@@ -242,7 +248,9 @@ const state = {
   list: [],
   idx: 0,
   log: loadLog(),
-  manual: new Map(),     // "kind:pair" -> ArrayBuffer (raw bytes)
+  manual: new Map(),   // "kind:pair" -> ArrayBuffer (raw bytes)
+  records: null,
+  notes: [],           // facts about what was loaded, for the report
 };
 let MODEL_STORE = {};
 
@@ -253,69 +261,80 @@ function saveLog() {
   try { localStorage.setItem(LOG_KEY, JSON.stringify(state.log)); } catch { /* storage may be full or blocked */ }
 }
 
-// ---------- custom backing: models come from buffers we prepared ----------
-class LocalBacking extends TranslatorBacking {
-  async loadModelRegistery() {
-    return [{ from: 'en', to: 'fr' }, { from: 'fr', to: 'en' }];
-  }
-  async loadTranslationModel({ from, to }) {
-    const m = MODEL_STORE[`${from}>${to}`];
-    if (!m) throw new Error(`The ${from} to ${to} model is not loaded yet.`);
-    return {
-      model: m.model,
-      shortlist: m.lex,
-      vocabs: [m.vocab],
-      qualityModel: undefined,
-      config: { 'beam-size': state.beam },
-    };
-  }
-}
-
 // ---------- helpers ----------
 function setStatus(text, kind) {
   const el = $('status');
   el.textContent = text;
   el.className = 'status' + (kind ? ' ' + kind : '');
 }
-function mb(n) { return (n / 1048576).toFixed(1) + ' MB'; }
+const mb = (n) => (n / 1048576).toFixed(1) + ' MB';
+const pause = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 function concat(chunks, total) {
   const out = new Uint8Array(total);
   let o = 0;
   for (const c of chunks) { out.set(c, o); o += c.length; }
   return out;
 }
+const isZstd = (u8) => u8.length > 4 && u8[0] === 0x28 && u8[1] === 0xb5 && u8[2] === 0x2f && u8[3] === 0xfd;
 const isGzip = (u8) => u8.length > 2 && u8[0] === 0x1f && u8[1] === 0x8b;
 const isLfsPointer = (u8) => new TextDecoder().decode(u8.slice(0, 40)).startsWith('version https://git-lfs');
+const hex = (buf) => Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+const versionKey = (v) => String(v || '0').split('.').map((x) => String(parseInt(x, 10) || 0).padStart(4, '0')).join('.');
 
-async function toBuffer(u8, label) {
+async function decode(u8, label) {
   if (isLfsPointer(u8)) throw new Error(`${label}: received a pointer file, not the real file.`);
+  if (isZstd(u8)) {
+    await pause();
+    const out = zstdDecompress(u8);
+    return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
+  }
   if (isGzip(u8)) {
-    if (typeof DecompressionStream === 'undefined') throw new Error('This browser cannot unpack the files. Use a recent Chrome.');
+    if (typeof DecompressionStream === 'undefined') throw new Error('This browser cannot unpack gzip files. Use a recent Chrome.');
     const stream = new Blob([u8]).stream().pipeThrough(new DecompressionStream('gzip'));
     return await new Response(stream).arrayBuffer();
   }
   return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
 }
 
-function filesFor(pair) {
-  return {
-    model: `model.${pair}.intgemm.alphas.bin.gz`,
-    lex: `lex.50.50.${pair}.s2t.bin.gz`,
-    vocab: `vocab.${pair}.spm.gz`,
-  };
+// ---------- model records ----------
+async function loadRecords() {
+  if (state.records) return state.records;
+  const res = await fetch(`${HF}/records.json`, { credentials: 'omit' });
+  if (!res.ok) throw new Error(`The model list could not be fetched (HTTP ${res.status}).`);
+  const data = await res.json();
+  const arr = Array.isArray(data) ? data : (data.data || data.records || []);
+  const best = {};
+  for (const r of arr) {
+    const name = r.name || r.attachment?.filename || '';
+    const pair = (name.match(/\.(enfr|fren)\./) || [])[1] || `${r.sourceLanguage || ''}${r.targetLanguage || ''}`;
+    if (pair !== 'enfr' && pair !== 'fren') continue;
+    const type = r.fileType;
+    if (!['model', 'vocab', 'lex'].includes(type)) continue;
+    const key = `${type}:${pair}`;
+    if (!best[key] || versionKey(r.version) > versionKey(best[key].version)) best[key] = r;
+  }
+  state.records = best;
+  return best;
 }
-function candidateUrls(tier, pair, file) {
-  const path = `models/${tier}/${pair}/${file}`;
-  return [
-    `./${path}`,
-    `https://media.githubusercontent.com/media/mozilla/firefox-translations-models/main/${path}`,
-    `${MIRROR}/raw/main/${path}`,
-  ];
+
+function makeRow(name) {
+  const wrap = document.createElement('div');
+  wrap.className = 'file';
+  const label = document.createElement('div');
+  label.textContent = name;
+  const bar = document.createElement('progress');
+  bar.max = 100; bar.value = 0;
+  const info = document.createElement('div');
+  info.className = 'muted';
+  info.textContent = 'Waiting';
+  wrap.append(label, bar, info);
+  $('files').append(wrap);
+  return { bar, info };
 }
 
 async function fetchBytes(url, onBytes) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), 180000);
+  const timer = setTimeout(() => ctl.abort(), 240000);
   try {
     const res = await fetch(url, { credentials: 'omit', signal: ctl.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -334,55 +353,75 @@ async function fetchBytes(url, onBytes) {
   } finally { clearTimeout(timer); }
 }
 
-function makeRow(name) {
-  const wrap = document.createElement('div');
-  wrap.className = 'file';
-  const label = document.createElement('div');
-  label.textContent = name;
-  const bar = document.createElement('progress');
-  bar.max = 100; bar.value = 0;
-  const info = document.createElement('div');
-  info.className = 'muted';
-  info.textContent = 'Waiting';
-  wrap.append(label, bar, info);
-  $('files').append(wrap);
-  return { bar, info };
+function localCandidates(rec) {
+  const names = new Set();
+  if (rec?.attachment?.location) names.add(rec.attachment.location.split('/').pop());
+  if (rec?.location) names.add(rec.location.split('/').pop());
+  if (rec?.name) { names.add(`${rec.name}.zst`); names.add(rec.name); }
+  const urls = [];
+  for (const n of names) { urls.push(`./models/${n}`); urls.push(`./${n}`); }
+  return urls;
 }
 
-async function getOne(kind, pair, tier, file) {
-  const manualKey = `${kind}:${pair}`;
-  const row = makeRow(`${pair}: ${file}`);
+// returns an ArrayBuffer, or null when an optional file is not available
+async function getOne(type, pair, optional) {
+  const records = await loadRecords();
+  const rec = records[`${type}:${pair}`] || (type === 'lex' ? { name: LEX[pair].name, location: LEX[pair].location } : null);
+  const name = rec?.name || `${type}.${pair}`;
+  const row = makeRow(`${pair}: ${name}`);
+  const manualKey = `${type}:${pair}`;
+
+  let raw = null;
+  let where = '';
   if (state.manual.has(manualKey)) {
-    const raw = new Uint8Array(state.manual.get(manualKey));
-    row.bar.value = 100; row.info.textContent = `From your chosen file (${mb(raw.length)})`;
-    return await toBuffer(raw, file);
-  }
-  const errors = [];
-  for (const url of candidateUrls(tier, pair, file)) {
-    try {
-      row.info.textContent = 'Downloading…';
-      const raw = await fetchBytes(url, (got, total) => {
-        row.bar.value = total ? Math.round((got / total) * 100) : 0;
-        row.info.textContent = total ? `${mb(got)} of ${mb(total)}` : `${mb(got)}`;
-      });
-      const buf = await toBuffer(raw, file);
-      row.bar.value = 100;
-      row.info.textContent = `Ready (${mb(buf.byteLength)} unpacked) from ${url.startsWith('./') ? 'this site' : new URL(url).hostname}`;
-      return buf;
-    } catch (e) {
-      errors.push(`${new URL(url, location.href).hostname}: ${e.message}`);
+    raw = new Uint8Array(state.manual.get(manualKey));
+    where = 'your chosen file';
+    row.bar.value = 100;
+  } else {
+    const urls = localCandidates(rec);
+    if (type !== 'lex' && rec?.attachment?.location) urls.push(`${HF}/${rec.attachment.location}`);
+    for (const url of urls) {
+      try {
+        row.info.textContent = 'Looking…';
+        raw = await fetchBytes(url, (got, total) => {
+          row.bar.value = total ? Math.round((got / total) * 100) : 0;
+          row.info.textContent = total ? `${mb(got)} of ${mb(total)}` : mb(got);
+        });
+        where = url.startsWith('./') ? 'this site' : new URL(url).hostname;
+        break;
+      } catch { raw = null; }
     }
   }
-  row.info.textContent = 'Failed';
-  throw new Error(`Could not get ${file}. Tried: ${errors.join('; ')}`);
+
+  if (!raw) {
+    if (optional) {
+      row.info.textContent = 'Not found. Continuing without it.';
+      state.notes.push(`${name}: not available, running without it`);
+      return null;
+    }
+    row.info.textContent = 'Failed';
+    throw new Error(`Could not get ${name}. The page tried this site and the Hugging Face mirror.`);
+  }
+
+  row.info.textContent = 'Unpacking…';
+  const buf = await decode(raw, name);
+  row.bar.value = 100;
+  let check = '';
+  const expected = String(rec?.decompressedHash || '').toLowerCase();
+  if (expected && crypto?.subtle) {
+    const actual = hex(await crypto.subtle.digest('SHA-256', buf));
+    check = actual === expected ? ', checksum matches' : ', CHECKSUM DIFFERS';
+  }
+  row.info.textContent = `Ready: ${mb(buf.byteLength)} unpacked, from ${where}${check}`;
+  state.notes.push(`${name}: version ${rec?.version ?? 'n/a'}, ${mb(buf.byteLength)} unpacked, from ${where}${check}`);
+  return buf;
 }
 
-async function getPair(pair, tier) {
-  const f = filesFor(pair);
-  const model = await getOne('model', pair, tier, f.model);
-  const lex = await getOne('lex', pair, tier, f.lex);
-  const vocab = await getOne('vocab', pair, tier, f.vocab);
-  return { model, lex, vocab };
+async function getPair(pair) {
+  const model = await getOne('model', pair, false);
+  const vocab = await getOne('vocab', pair, false);
+  const lex = await getOne('lex', pair, true);
+  return { model, vocab, lex };
 }
 
 async function run(text, from, to) {
@@ -398,19 +437,44 @@ async function prepare() {
   $('go').disabled = true;
   $('files').textContent = '';
   state.ready = false;
-  state.tier = $('tier').value;
+  state.notes = [];
+  state.engineKind = $('engine').value;
   state.beam = Number($('beam').value);
   const t0 = performance.now();
   try {
     if (state.translator) { try { await state.translator.delete(); } catch { /* ignore */ } state.translator = null; }
     MODEL_STORE = {};
-    setStatus('Downloading the English to French model…');
-    MODEL_STORE['en>fr'] = await getPair('enfr', state.tier);
-    setStatus('Downloading the French to English model…');
-    MODEL_STORE['fr>en'] = await getPair('fren', state.tier);
+    setStatus('Finding the current models…');
+    await loadRecords();
+    setStatus('Getting the English to French model…');
+    MODEL_STORE['en>fr'] = await getPair('enfr');
+    setStatus('Getting the French to English model…');
+    MODEL_STORE['fr>en'] = await getPair('fren');
+
     setStatus('Starting the translation engine…');
-    state.translator = new LatencyOptimisedTranslator({}, new LocalBacking({}));
+    const mod = await import(`./${state.engineKind}/translator.js`);
+    const registry = async () => [{ from: 'en', to: 'fr' }, { from: 'fr', to: 'en' }];
+    class LocalBacking extends mod.TranslatorBacking {
+      loadModelRegistery() { return registry(); }   // spelling used by the official build
+      loadModelRegistry() { return registry(); }    // spelling used by the newer build
+      async loadTranslationModel({ from, to }) {
+        const m = MODEL_STORE[`${from}>${to}`];
+        if (!m) throw new Error(`The ${from} to ${to} model is not loaded yet.`);
+        return {
+          model: m.model,
+          shortlist: m.lex || new ArrayBuffer(0),
+          vocabs: [m.vocab],
+          qualityModel: undefined,
+          config: { 'beam-size': state.beam },
+        };
+      }
+    }
+    const backing = new LocalBacking({});
+    state.translator = state.engineKind === 'engine2'
+      ? new mod.LatencyOptimisedTranslator({ from: 'en', to: 'fr' }, {}, backing)
+      : new mod.LatencyOptimisedTranslator({}, backing);
     await state.translator.worker;
+
     setStatus('Loading the models into the engine (first run is slower)…');
     const w0 = performance.now();
     await run('Hello, how are you?', 'en', 'fr');
@@ -418,11 +482,14 @@ async function prepare() {
     state.warmMs = Math.round(performance.now() - w0);
     state.prepSeconds = Math.round((performance.now() - t0) / 1000);
     state.ready = true;
-    setStatus(`Ready. Preparing took ${state.prepSeconds} s; loading both models into the engine took ${state.warmMs} ms.`, 'ok');
+    const lexNote = (MODEL_STORE['en>fr'].lex && MODEL_STORE['fr>en'].lex) ? 'with word lists' : 'without word lists (slower)';
+    setStatus(`Ready, ${lexNote}. Preparing took ${state.prepSeconds} s; loading both models took ${state.warmMs} ms.`, 'ok');
     $('go').disabled = false;
   } catch (e) {
     console.error(e);
-    setStatus(`${e.message}. If this keeps happening, open "If the download fails" below and choose the files yourself.`, 'err');
+    const noLex = !(MODEL_STORE['en>fr']?.lex && MODEL_STORE['fr>en']?.lex);
+    const hint = noLex ? ' The word-list files were not found, which may be the cause: see "Optional: add the word-list files".' : '';
+    setStatus(`${e.message}${hint} You can also try the other engine build.`, 'err');
     $('manual').open = true;
   } finally {
     $('prep').disabled = false;
@@ -431,19 +498,16 @@ async function prepare() {
 }
 
 function renderLinks() {
-  const tier = $('tier').value;
   const ul = $('links');
   ul.textContent = '';
   for (const pair of ['enfr', 'fren']) {
-    for (const file of Object.values(filesFor(pair))) {
-      const li = document.createElement('li');
-      const a = document.createElement('a');
-      a.href = `${MIRROR}/raw/main/models/${tier}/${pair}/${file}`;
-      a.textContent = `${tier}/${pair}/${file}`;
-      a.rel = 'noopener';
-      li.append(a);
-      ul.append(li);
-    }
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = `${CDN}/${LEX[pair].location}`;
+    a.textContent = `${LEX[pair].name} (${pair === 'enfr' ? 'English to French' : 'French to English'})`;
+    a.rel = 'noopener';
+    li.append(a);
+    ul.append(li);
   }
 }
 
@@ -463,7 +527,7 @@ async function onPick() {
     state.manual.set(`${kind}:${m[1]}`, await file.arrayBuffer());
     seen.push(file.name);
   }
-  $('picked').textContent = seen.length ? `Recognised ${seen.length} of 6 files: ${seen.join(', ')}` : 'No matching files recognised.';
+  $('picked').textContent = seen.length ? `Recognised ${seen.length} file(s): ${seen.join(', ')}` : 'No matching files recognised.';
 }
 
 // ---------- step 2: translate ----------
@@ -551,7 +615,7 @@ function median(a) {
   const m = Math.floor(s.length / 2);
   return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
 }
-function count(arr, key, val) { return arr.filter((e) => e[key] === val).length; }
+const count = (arr, key, val) => arr.filter((e) => e[key] === val).length;
 
 function renderLog() {
   const log = state.log;
@@ -583,8 +647,9 @@ function buildReport() {
   const head = [
     'Sanctuaire Test 1 results',
     `Date: ${new Date().toISOString()}`,
-    `Tier: ${state.tier}; search mode (beam): ${state.beam}`,
+    `Engine build: ${state.engineKind === 'engine2' ? 'newer 0.4.16' : 'official 0.4.9'}; search mode (beam): ${state.beam}`,
     `Prepare time: ${state.prepSeconds ?? 'n/a'} s; engine warm-up: ${state.warmMs ?? 'n/a'} ms`,
+    ...state.notes.map((n) => `File: ${n}`),
     `Device: ${nav.userAgent}`,
     `Memory hint (GB): ${nav.deviceMemory ?? 'n/a'}; CPU threads: ${nav.hardwareConcurrency ?? 'n/a'}`,
     '',
@@ -596,8 +661,7 @@ function buildReport() {
 }
 
 async function copyReport() {
-  const text = buildReport();
-  try { await navigator.clipboard.writeText(text); $('copied').textContent = 'Copied. Paste it into the chat.'; }
+  try { await navigator.clipboard.writeText(buildReport()); $('copied').textContent = 'Copied. Paste it into the chat.'; }
   catch { $('copied').textContent = 'Could not copy. Use "Save as a text file" instead.'; }
 }
 function downloadReport() {
@@ -617,7 +681,6 @@ function clearAll() {
 $('prep').addEventListener('click', prepare);
 $('usefiles').addEventListener('click', prepare);
 $('pick').addEventListener('change', onPick);
-$('tier').addEventListener('change', renderLinks);
 $('dir-enfr').addEventListener('click', () => setDir('enfr'));
 $('dir-fren').addEventListener('click', () => setDir('fren'));
 $('go').addEventListener('click', go);
