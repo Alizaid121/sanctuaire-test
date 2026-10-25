@@ -90,6 +90,7 @@
     <label for="pin">PIN / Code</label>
     <input id="pin" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="8">
     <div class="row"><button id="enter" type="button">Enter · Entrer</button></div>
+    <div class="row"><button id="check" type="button" class="secondary">Check the connection · Vérifier la connexion</button></div>
     <div id="login-msg" class="msg" role="status" aria-live="polite"></div>
   </section>
 
@@ -291,9 +292,40 @@ async function rpc(fn, args) {
   if (!res.ok) {
     let m = '';
     try { m = (await res.json()).message || ''; } catch { /* ignore */ }
-    throw new Error(`HTTP ${res.status}${m ? ': ' + m : ''}`);
+    const err = new Error(`HTTP ${res.status}${m ? ': ' + m : ''}`);
+    err.status = res.status;
+    throw err;
   }
   return await res.json();
+}
+
+// What went wrong, in plain words plus the technical detail, so a failure can be diagnosed from a screenshot.
+function explain(e) {
+  if (e && e.status) return `HTTP ${e.status}: ${e.message.replace(/^HTTP \d+:?\s*/, '') || 'no details'}`;
+  return `no answer from the server (${(e && e.message) || 'network error'})`;
+}
+
+// Harmless probe: asks for the sheet with a made-up session. A healthy setup answers "auth".
+async function diagnose() {
+  const box = $('login-msg');
+  box.className = 'msg'; box.textContent = '…';
+  try {
+    const r = await rpc('t1_get_sheet', { p_token: 'connection-check' });
+    if (r && r.ok === false && r.error === 'auth') {
+      box.className = 'msg ok';
+      box.textContent = 'Connected: the database and the sheet functions answer. / Connecté : la base de données et les fonctions de la feuille répondent.';
+    } else {
+      box.className = 'msg err';
+      box.textContent = `Unexpected answer: ${JSON.stringify(r).slice(0, 200)}`;
+    }
+  } catch (e) {
+    box.className = 'msg err';
+    let hint = '';
+    if (!e.status) hint = ' Could not connect at all: check the internet, the Supabase status page, and that the project is running (not paused).';
+    else if (e.status === 404) hint = ' The project answers, but the function was not found: the setup SQL did not run, or the API list needs a refresh.';
+    else if (e.status === 401 || e.status === 403) hint = ' The project answered but refused the key: check the public key in this page.';
+    box.textContent = `Problem: ${explain(e)}.${hint}`;
+  }
 }
 const call = (fn, args) => rpc(fn, { p_token: session.token, ...args });
 
@@ -335,7 +367,7 @@ async function doLogin() {
       m.className = 'msg err';
     }
   } catch (e) {
-    m.textContent = `${I18N.en.netError}  /  ${I18N.fr.netError}`;
+    m.textContent = `${I18N.en.netError}  /  ${I18N.fr.netError}  [${explain(e)}]`;
     m.className = 'msg err';
   } finally {
     $('enter').disabled = false;
@@ -930,6 +962,7 @@ function renderAdmin() {
 
 // ---------- start ----------
 $('enter').addEventListener('click', doLogin);
+$('check').addEventListener('click', diagnose);
 $('pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 $('refresh').addEventListener('click', () => refresh(true));
 $('logout').addEventListener('click', doLogout);
