@@ -125,6 +125,7 @@
 
 <script type="module">
 import { decompress as zstdDecompress } from './vendor/fzstd.mjs';
+import * as store from './modelstore.js';
 
 // ---- connection to the shared database (public values; safe to be in this file) ----
 const SUPABASE_URL = 'https://micrmjhtfkgatcztemmj.supabase.co';
@@ -157,7 +158,13 @@ const I18N = {
     translatorHelp: 'Each phone prepares its own translator once (about 60 MB, a few minutes on the first run). Nothing you type is sent to it or to anyone else for translation; it runs on your phone.',
     engine: 'Engine build', engineNew: 'Newer build 0.4.16 (recommended)', engineOld: 'Official build 0.4.9',
     beam: 'Search mode', beamFast: 'Fast', beamCareful: 'Careful (slower)',
-    prepare: 'Download and prepare', preparing: 'Preparing…',
+    prepare: 'Download and prepare (one time only)', preparing: 'Preparing…',
+    prepareStored: 'Start the translator (no download)', redo: 'Download again (only if something is wrong)',
+    confirmRedo: 'Delete the stored models and download them again (about 60 MB)?',
+    fromStorage: 'from this phone\'s storage, no download', notStored: 'The models are not stored on this phone yet.',
+    foundStored: 'Models found on this phone. Starting the translator…',
+    readyStored: (s) => `Ready, from this phone's storage. Nothing was downloaded. Took ${s} s.`,
+    readyDownloaded: (s, m) => `Ready. Downloaded ${m} MB, and stored on this phone: this is a one-time download. Took ${s} s.`,
     notReady: 'Not prepared yet.',
     ready: (s, lex) => `Ready${lex ? '' : ' (without word lists)'}. Took ${s} s.`,
     prepFail: (m) => `${m} You can also try the other engine build.`,
@@ -210,7 +217,13 @@ const I18N = {
     translatorHelp: 'Chaque téléphone prépare son propre traducteur une seule fois (environ 60 Mo, quelques minutes la première fois). Rien de ce que tu écris n\'est envoyé à quelqu\'un pour être traduit : tout se fait sur ton téléphone.',
     engine: 'Version du moteur', engineNew: 'Version récente 0.4.16 (recommandée)', engineOld: 'Version officielle 0.4.9',
     beam: 'Mode de recherche', beamFast: 'Rapide', beamCareful: 'Soigné (plus lent)',
-    prepare: 'Télécharger et préparer', preparing: 'Préparation…',
+    prepare: 'Télécharger et préparer (une seule fois)', preparing: 'Préparation…',
+    prepareStored: 'Démarrer le traducteur (sans téléchargement)', redo: 'Télécharger à nouveau (seulement en cas de problème)',
+    confirmRedo: 'Supprimer les modèles enregistrés et les télécharger à nouveau (environ 60 Mo) ?',
+    fromStorage: 'depuis la mémoire du téléphone, sans téléchargement', notStored: 'Les modèles ne sont pas encore enregistrés sur ce téléphone.',
+    foundStored: 'Modèles trouvés sur ce téléphone. Démarrage du traducteur…',
+    readyStored: (s) => `Prêt, depuis la mémoire du téléphone. Rien n'a été téléchargé. Durée : ${s} s.`,
+    readyDownloaded: (s, m) => `Prêt. ${m} Mo téléchargés puis enregistrés sur ce téléphone : c'est un téléchargement unique. Durée : ${s} s.`,
     notReady: 'Pas encore préparé.',
     ready: (s, lex) => `Prêt${lex ? '' : ' (sans listes de mots)'}. Durée : ${s} s.`,
     prepFail: (m) => `${m} Tu peux aussi essayer l\'autre version du moteur.`,
@@ -396,6 +409,7 @@ async function enter() {
   $('view-main').classList.remove('hidden');
   buildChrome();
   buildTranslatorPanel();
+  autoStartTranslator();   // not awaited: the sheet opens while the translator starts
   await refresh(true);
   startPolling();
 }
@@ -414,7 +428,8 @@ function buildChrome() {
 }
 
 // ---------- translator (runs on this phone) ----------
-const tr = { translator: null, ready: false, engineKind: 'engine2', beam: 1, lex: false, records: null };
+const TR_SETTINGS = 'sanctuaire-t1-translator-v1';
+const tr = { translator: null, ready: false, engineKind: 'engine2', beam: 1, lex: false, records: null, cached: false, downloaded: 0 };
 let MODEL_STORE = {};
 const versionKey = (v) => String(v || '0').split('.').map((x) => String(parseInt(x, 10) || 0).padStart(4, '0')).join('.');
 const isZstd = (u8) => u8.length > 4 && u8[0] === 0x28 && u8[1] === 0xb5 && u8[2] === 0x2f && u8[3] === 0xfd;
@@ -500,13 +515,23 @@ function makeRow(name) {
   return { bar, info };
 }
 
-async function getOne(type, pair, optional) {
-  const records = await loadRecords();
-  const rec = records[`${type}:${pair}`] || (type === 'lex' ? { name: LEX[pair].name, location: LEX[pair].location } : null);
+async function getOne(type, pair, optional, opts = {}) {
+  const key = `${type}:${pair}`;
+  const row = makeRow(`${pair}: ${type === 'lex' ? LEX[pair].name : type}`);
+  if (!opts.force) {
+    const c = await store.get(key).catch(() => null);
+    if (c && c.buffer) {
+      row.bar.value = 100;
+      row.info.textContent = `${mb(c.buffer.byteLength)} · ${t('fromStorage')}`;
+      return c.buffer;
+    }
+  }
+  if (opts.cacheOnly && type !== 'lex') { row.info.textContent = '—'; throw new Error(t('notStored')); }
+  const records = opts.cacheOnly ? {} : await loadRecords();
+  const rec = records[key] || (type === 'lex' ? { name: LEX[pair].name, location: LEX[pair].location } : null);
   const name = rec?.name || `${type}.${pair}`;
-  const row = makeRow(`${pair}: ${name}`);
   const urls = localCandidates(rec);
-  if (type !== 'lex' && rec?.attachment?.location) urls.push(`${HF}/${rec.attachment.location}`);
+  if (!opts.cacheOnly && type !== 'lex' && rec?.attachment?.location) urls.push(`${HF}/${rec.attachment.location}`);
   let raw = null;
   for (const url of urls) {
     try {
@@ -514,6 +539,7 @@ async function getOne(type, pair, optional) {
         row.bar.value = total ? Math.round((got / total) * 100) : 0;
         row.info.textContent = total ? `${mb(got)} / ${mb(total)}` : mb(got);
       });
+      tr.downloaded += raw.length;
       break;
     } catch { raw = null; }
   }
@@ -531,13 +557,14 @@ async function getOne(type, pair, optional) {
     note = hex(await crypto.subtle.digest('SHA-256', buf)) === expected ? ' ✓' : ' (checksum differs)';
   }
   row.info.textContent = `${mb(buf.byteLength)}${note}`;
+  await store.put({ key, buffer: buf, name, version: rec?.version ?? null, bytes: buf.byteLength, savedAt: Date.now() }).catch(() => {});
   return buf;
 }
 
-async function getPair(pair) {
-  const model = await getOne('model', pair, false);
-  const vocab = await getOne('vocab', pair, false);
-  const lex = await getOne('lex', pair, true);
+async function getPair(pair, opts) {
+  const model = await getOne('model', pair, false, opts);
+  const vocab = await getOne('vocab', pair, false, opts);
+  const lex = await getOne('lex', pair, true, opts);
   return { model, vocab, lex };
 }
 
@@ -553,21 +580,22 @@ function setTStatus(text, kind) {
   s.className = 'msg' + (kind ? ' ' + kind : '');
 }
 
-async function prepareTranslator() {
-  const btn = $('tprep');
-  btn.disabled = true; btn.textContent = t('preparing');
+async function prepareTranslator(opts = {}) {
+  const btn = $('tprep'), redo = $('tredo');
+  btn.disabled = true; redo.disabled = true; btn.textContent = t('preparing');
   $('tfiles').textContent = '';
-  tr.ready = false;
+  tr.ready = false; tr.downloaded = 0;
   tr.engineKind = $('tengine').value;
   tr.beam = Number($('tbeam').value);
+  try { localStorage.setItem(TR_SETTINGS, JSON.stringify({ engine: tr.engineKind, beam: tr.beam })); } catch { /* ignore */ }
   const t0 = performance.now();
   try {
+    if (opts.force) { await store.clear().catch(() => {}); tr.cached = false; }
     if (tr.translator) { try { await tr.translator.delete(); } catch { /* ignore */ } tr.translator = null; }
     MODEL_STORE = {};
     setTStatus(t('preparing'));
-    await loadRecords();
-    MODEL_STORE['en>fr'] = await getPair('enfr');
-    MODEL_STORE['fr>en'] = await getPair('fren');
+    MODEL_STORE['en>fr'] = await getPair('enfr', opts);
+    MODEL_STORE['fr>en'] = await getPair('fren', opts);
     const mod = await import(`./${tr.engineKind}/translator.js`);
     const registry = async () => [{ from: 'en', to: 'fr' }, { from: 'fr', to: 'en' }];
     class LocalBacking extends mod.TranslatorBacking {
@@ -588,13 +616,38 @@ async function prepareTranslator() {
     await runTranslate('Bonjour, comment allez-vous ?', 'fr', 'en');
     tr.lex = !!(MODEL_STORE['en>fr'].lex && MODEL_STORE['fr>en'].lex);
     tr.ready = true;
-    setTStatus(t('ready', Math.round((performance.now() - t0) / 1000), tr.lex), 'ok');
+    tr.cached = await store.isComplete();
+    if (tr.downloaded > 0) await store.persist();   // ask the browser to keep the stored models
+    const secs = Math.round((performance.now() - t0) / 1000);
+    setTStatus(tr.downloaded > 0 ? t('readyDownloaded', secs, Math.round(tr.downloaded / 1048576)) : t('readyStored', secs), 'ok');
     $('tdetails').open = false;
   } catch (e) {
     console.error(e);
     setTStatus(t('prepFail', e.message), 'err');
   } finally {
-    btn.disabled = false; btn.textContent = t('prepare');
+    btn.disabled = false; redo.disabled = false;
+    updatePrepLabels();
+  }
+}
+
+function updatePrepLabels() {
+  const b = $('tprep');
+  if (!b) return;
+  b.textContent = tr.cached ? t('prepareStored') : t('prepare');
+  $('tredo').classList.toggle('hidden', !tr.cached);
+}
+
+// Called after login: if the models are already stored on this phone, start the translator with no download.
+async function autoStartTranslator() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(TR_SETTINGS) || 'null');
+    if (saved) { $('tengine').value = saved.engine; $('tbeam').value = String(saved.beam); }
+  } catch { /* ignore */ }
+  tr.cached = await store.isComplete();
+  updatePrepLabels();
+  if (tr.cached && !tr.ready) {
+    setTStatus(t('foundStored'));
+    await prepareTranslator({ cacheOnly: true });
   }
 }
 
@@ -612,12 +665,15 @@ function buildTranslatorPanel() {
     el('select', { id: 'tbeam' },
       el('option', { value: '1', text: t('beamFast') }),
       el('option', { value: '4', text: t('beamCareful') })),
-    el('div', { class: 'row' }, el('button', { id: 'tprep', type: 'button', text: t('prepare'), onclick: prepareTranslator })),
+    el('div', { class: 'row' },
+      el('button', { id: 'tprep', type: 'button', text: t('prepare'), onclick: () => prepareTranslator({ cacheOnly: tr.cached }) }),
+      el('button', { id: 'tredo', type: 'button', class: 'secondary hidden', text: t('redo'), onclick: () => { if (confirm(t('confirmRedo'))) prepareTranslator({ force: true }); } })),
     el('div', { id: 'tfiles', class: 'files' }),
     el('div', { id: 'tstatus', class: 'msg', role: 'status', 'aria-live': 'polite', text: tr.ready ? t('ready', 0, tr.lex) : t('notReady') }));
   p.append(d);
   $('tengine').value = tr.engineKind;
   $('tbeam').value = String(tr.beam);
+  updatePrepLabels();
 }
 
 function engineLabel() {

@@ -134,7 +134,8 @@
     </select>
 
     <div class="row">
-      <button id="prep" type="button">Download and prepare</button>
+      <button id="prep" type="button">Download and prepare (one time only)</button>
+      <button id="redownload" type="button" class="secondary hidden">Download again (only if something is wrong)</button>
     </div>
     <div id="files" class="files" aria-live="polite"></div>
     <div id="status" class="status" role="status" aria-live="polite">Not started.</div>
@@ -222,11 +223,13 @@
 
 <script type="module">
 import { decompress as zstdDecompress } from './vendor/fzstd.mjs';
+import * as store from './modelstore.js';
 
 const $ = (id) => document.getElementById(id);
 const HF = 'https://huggingface.co/TranslateInPlace/translate-in-place-models/resolve/main';
 const CDN = 'https://firefox-settings-attachments.cdn.mozilla.net';
 const LOG_KEY = 'sanctuaire-test1-log-v1';
+const SETTINGS_KEY = 'sanctuaire-test1-settings-v1';
 
 // The word-list ("lex") files are listed by Mozilla's Remote Settings but cannot be fetched by a web page.
 // Locations come from the model finder report of 23 October 2026.
@@ -249,6 +252,8 @@ const state = {
   idx: 0,
   log: loadLog(),
   manual: new Map(),   // "kind:pair" -> ArrayBuffer (raw bytes)
+  cached: false,       // the models are stored on this phone
+  downloaded: 0,       // bytes downloaded during the last preparation
   records: null,
   notes: [],           // facts about what was loaded, for the report
 };
@@ -363,23 +368,35 @@ function localCandidates(rec) {
   return urls;
 }
 
-// returns an ArrayBuffer, or null when an optional file is not available
-async function getOne(type, pair, optional) {
-  const records = await loadRecords();
-  const rec = records[`${type}:${pair}`] || (type === 'lex' ? { name: LEX[pair].name, location: LEX[pair].location } : null);
-  const name = rec?.name || `${type}.${pair}`;
-  const row = makeRow(`${pair}: ${name}`);
-  const manualKey = `${type}:${pair}`;
-
+// returns an ArrayBuffer, or null when an optional file is not available.
+// Order: files you chose by hand, then this phone's storage, then this site, then the mirror.
+async function getOne(type, pair, optional, opts = {}) {
+  const key = `${type}:${pair}`;
+  const row = makeRow(`${pair}: ${type === 'lex' ? LEX[pair].name : type}`);
   let raw = null;
   let where = '';
-  if (state.manual.has(manualKey)) {
-    raw = new Uint8Array(state.manual.get(manualKey));
+  let rec = null;
+
+  if (state.manual.has(key)) {
+    raw = new Uint8Array(state.manual.get(key));
     where = 'your chosen file';
     row.bar.value = 100;
-  } else {
+  } else if (!opts.force) {
+    const c = await store.get(key).catch(() => null);
+    if (c && c.buffer) {
+      row.bar.value = 100;
+      row.info.textContent = `From this phone's storage (${mb(c.buffer.byteLength)}), no download`;
+      state.notes.push(`${c.name || key}: version ${c.version ?? 'n/a'}, ${mb(c.buffer.byteLength)} unpacked, from this phone's storage`);
+      return c.buffer;
+    }
+  }
+
+  if (!raw) {
+    if (opts.cacheOnly && type !== 'lex') { row.info.textContent = 'Not stored on this phone'; throw new Error('The models are not stored on this phone yet.'); }
+    const records = opts.cacheOnly ? {} : await loadRecords();
+    rec = records[key] || (type === 'lex' ? { name: LEX[pair].name, location: LEX[pair].location } : null);
     const urls = localCandidates(rec);
-    if (type !== 'lex' && rec?.attachment?.location) urls.push(`${HF}/${rec.attachment.location}`);
+    if (!opts.cacheOnly && type !== 'lex' && rec?.attachment?.location) urls.push(`${HF}/${rec.attachment.location}`);
     for (const url of urls) {
       try {
         row.info.textContent = 'Looking…';
@@ -387,12 +404,14 @@ async function getOne(type, pair, optional) {
           row.bar.value = total ? Math.round((got / total) * 100) : 0;
           row.info.textContent = total ? `${mb(got)} of ${mb(total)}` : mb(got);
         });
+        state.downloaded += raw.length;
         where = url.startsWith('./') ? 'this site' : new URL(url).hostname;
         break;
       } catch { raw = null; }
     }
   }
 
+  const name = rec?.name || (type === 'lex' ? LEX[pair].name : `${type}.${pair}`);
   if (!raw) {
     if (optional) {
       row.info.textContent = 'Not found. Continuing without it.';
@@ -408,19 +427,20 @@ async function getOne(type, pair, optional) {
   row.bar.value = 100;
   let check = '';
   const expected = String(rec?.decompressedHash || '').toLowerCase();
-  if (expected && crypto?.subtle) {
+  if (expected && globalThis.crypto?.subtle) {
     const actual = hex(await crypto.subtle.digest('SHA-256', buf));
     check = actual === expected ? ', checksum matches' : ', CHECKSUM DIFFERS';
   }
-  row.info.textContent = `Ready: ${mb(buf.byteLength)} unpacked, from ${where}${check}`;
+  row.info.textContent = `Ready: ${mb(buf.byteLength)} unpacked, from ${where}${check}. Stored on this phone.`;
   state.notes.push(`${name}: version ${rec?.version ?? 'n/a'}, ${mb(buf.byteLength)} unpacked, from ${where}${check}`);
+  await store.put({ key, buffer: buf, name, version: rec?.version ?? null, bytes: buf.byteLength, savedAt: Date.now() }).catch(() => {});
   return buf;
 }
 
-async function getPair(pair) {
-  const model = await getOne('model', pair, false);
-  const vocab = await getOne('vocab', pair, false);
-  const lex = await getOne('lex', pair, true);
+async function getPair(pair, opts) {
+  const model = await getOne('model', pair, false, opts);
+  const vocab = await getOne('vocab', pair, false, opts);
+  const lex = await getOne('lex', pair, true, opts);
   return { model, vocab, lex };
 }
 
@@ -431,25 +451,27 @@ async function run(text, from, to) {
 }
 
 // ---------- step 1: prepare ----------
-async function prepare() {
+async function prepare(opts = {}) {
   $('prep').disabled = true;
   $('usefiles').disabled = true;
+  $('redownload').disabled = true;
   $('go').disabled = true;
   $('files').textContent = '';
   state.ready = false;
   state.notes = [];
+  state.downloaded = 0;
   state.engineKind = $('engine').value;
   state.beam = Number($('beam').value);
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ engine: state.engineKind, beam: state.beam })); } catch { /* ignore */ }
   const t0 = performance.now();
   try {
+    if (opts.force) { await store.clear().catch(() => {}); state.cached = false; }
     if (state.translator) { try { await state.translator.delete(); } catch { /* ignore */ } state.translator = null; }
     MODEL_STORE = {};
-    setStatus('Finding the current models…');
-    await loadRecords();
-    setStatus('Getting the English to French model…');
-    MODEL_STORE['en>fr'] = await getPair('enfr');
-    setStatus('Getting the French to English model…');
-    MODEL_STORE['fr>en'] = await getPair('fren');
+    setStatus(opts.cacheOnly ? 'Loading the models stored on this phone…' : 'Getting the English to French model…');
+    MODEL_STORE['en>fr'] = await getPair('enfr', opts);
+    setStatus(opts.cacheOnly ? 'Loading the models stored on this phone…' : 'Getting the French to English model…');
+    MODEL_STORE['fr>en'] = await getPair('fren', opts);
 
     setStatus('Starting the translation engine…');
     const mod = await import(`./${state.engineKind}/translator.js`);
@@ -475,25 +497,51 @@ async function prepare() {
       : new mod.LatencyOptimisedTranslator({}, backing);
     await state.translator.worker;
 
-    setStatus('Loading the models into the engine (first run is slower)…');
+    setStatus('Loading the models into the engine…');
     const w0 = performance.now();
     await run('Hello, how are you?', 'en', 'fr');
     await run('Bonjour, comment allez-vous ?', 'fr', 'en');
     state.warmMs = Math.round(performance.now() - w0);
     state.prepSeconds = Math.round((performance.now() - t0) / 1000);
     state.ready = true;
+    state.cached = await store.isComplete();
+    if (state.downloaded > 0) await store.persist();   // ask the browser to keep the stored models
     const lexNote = (MODEL_STORE['en>fr'].lex && MODEL_STORE['fr>en'].lex) ? 'with word lists' : 'without word lists (slower)';
-    setStatus(`Ready, ${lexNote}. Preparing took ${state.prepSeconds} s; loading both models took ${state.warmMs} ms.`, 'ok');
+    const how = state.downloaded > 0
+      ? `Downloaded ${Math.round(state.downloaded / 1048576)} MB and stored on this phone: this is a one-time download.`
+      : 'Loaded from this phone\'s storage. Nothing was downloaded.';
+    setStatus(`Ready, ${lexNote}. ${how} Took ${state.prepSeconds} s; loading both models took ${state.warmMs} ms.`, 'ok');
     $('go').disabled = false;
   } catch (e) {
     console.error(e);
     const noLex = !(MODEL_STORE['en>fr']?.lex && MODEL_STORE['fr>en']?.lex);
-    const hint = noLex ? ' The word-list files were not found, which may be the cause: see "Optional: add the word-list files".' : '';
+    const hint = (noLex && !opts.cacheOnly) ? ' The word-list files were not found, which may be the cause: see "Optional: add the word-list files".' : '';
     setStatus(`${e.message}${hint} You can also try the other engine build.`, 'err');
     $('manual').open = true;
   } finally {
     $('prep').disabled = false;
     $('usefiles').disabled = false;
+    $('redownload').disabled = false;
+    updateButtons();
+  }
+}
+
+function updateButtons() {
+  $('prep').textContent = state.cached ? 'Start the translator (no download)' : 'Download and prepare (one time only)';
+  $('redownload').classList.toggle('hidden', !state.cached);
+}
+
+// On opening the page: if the models are already stored on this phone, start with no download.
+async function initFromStorage() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    if (saved) { $('engine').value = saved.engine; $('beam').value = String(saved.beam); }
+  } catch { /* ignore */ }
+  state.cached = await store.isComplete();
+  updateButtons();
+  if (state.cached) {
+    setStatus('Models found on this phone. Starting the translator…');
+    await prepare({ cacheOnly: true });
   }
 }
 
@@ -678,8 +726,9 @@ function clearAll() {
 }
 
 // ---------- wire up ----------
-$('prep').addEventListener('click', prepare);
-$('usefiles').addEventListener('click', prepare);
+$('prep').addEventListener('click', () => prepare({ cacheOnly: state.cached }));
+$('usefiles').addEventListener('click', () => prepare({}));
+$('redownload').addEventListener('click', () => { if (confirm('Delete the stored models and download them again (about 60 MB)?')) prepare({ force: true }); });
 $('pick').addEventListener('change', onPick);
 $('dir-enfr').addEventListener('click', () => setDir('enfr'));
 $('dir-fren').addEventListener('click', () => setDir('fren'));
@@ -695,6 +744,7 @@ onRate('rate1', 'rateOut');
 onRate('rate2', 'rateBack');
 renderLinks();
 renderLog();
+initFromStorage();
 </script>
 </body>
 </html>
