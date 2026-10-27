@@ -118,6 +118,15 @@
       <select id="filter"></select>
     </section>
 
+    <section class="card" id="report">
+      <h2 id="t-report"></h2>
+      <p class="muted" id="t-report-help"></p>
+      <label for="rlang" id="l-rlang"></label>
+      <select id="rlang"><option value="en">English</option><option value="fr">Français</option></select>
+      <div class="row"><button id="pdf" type="button"></button></div>
+      <div id="pdf-msg" class="msg" role="status" aria-live="polite"></div>
+    </section>
+
     <div id="cats"></div>
     <section class="card hidden" id="admin"></section>
   </div>
@@ -193,6 +202,9 @@ const I18N = {
     sentIn: 'Written in',
     pending: 'Not reviewed yet.',
     del: 'Delete', confirmDel: 'Delete this entry? It is kept in the history.',
+    reportTitle: 'Report (PDF)', reportHelp: 'A formatted report of everything in the sheet: a summary, the sentences that need attention, and all results by sentence type. Either of you can save it.',
+    reportLang: 'Report language', pdfButton: 'Save report as PDF', pdfBuilding: 'Building the report…',
+    pdfDone: (n) => `Saved: ${n}`, pdfFail: (m) => `Could not build the report: ${m}`,
     adminTitle: 'Admin', exportCopy: 'Copy all results', exportFile: 'Save all results as a text file',
     reset: 'Reset the whole sheet', confirmReset: 'Delete ALL entries from the sheet? (They stay in the history table.)',
     copied: 'Copied. Paste it into the chat.', copyFail: 'Could not copy. Use the file option instead.',
@@ -252,6 +264,9 @@ const I18N = {
     sentIn: 'Écrite en',
     pending: 'Pas encore évaluée.',
     del: 'Supprimer', confirmDel: 'Supprimer cette entrée ? Elle est conservée dans l\'historique.',
+    reportTitle: 'Rapport (PDF)', reportHelp: 'Un rapport mis en forme de tout ce qui est dans la feuille : un résumé, les phrases à surveiller et tous les résultats par type de phrases. Chacun de vous peut l\'enregistrer.',
+    reportLang: 'Langue du rapport', pdfButton: 'Enregistrer le rapport en PDF', pdfBuilding: 'Création du rapport…',
+    pdfDone: (n) => `Enregistré : ${n}`, pdfFail: (m) => `Impossible de créer le rapport : ${m}`,
     adminTitle: 'Admin', exportCopy: 'Copier tous les résultats', exportFile: 'Enregistrer tous les résultats en fichier texte',
     reset: 'Réinitialiser toute la feuille', confirmReset: 'Supprimer TOUTES les entrées de la feuille ? (Elles restent dans l\'historique.)',
     copied: 'Copié. Colle-le dans la conversation.', copyFail: 'Impossible de copier. Utilise plutôt le fichier.',
@@ -421,6 +436,12 @@ function buildChrome() {
   $('refresh').textContent = t('refresh');
   $('logout').textContent = t('logout');
   $('l-filter').textContent = t('filter');
+  $('t-report').textContent = t('reportTitle');
+  $('t-report-help').textContent = t('reportHelp');
+  $('l-rlang').textContent = t('reportLang');
+  $('pdf').textContent = t('pdfButton');
+  $('rlang').value = LANG;
+  $('pdf-msg').textContent = '';
   const f = $('filter');
   f.textContent = '';
   f.append(el('option', { value: 'all', text: t('fAll') }), el('option', { value: 'action', text: t('fAction') }));
@@ -1016,12 +1037,58 @@ function renderAdmin() {
   a.append(el('h2', { text: t('adminTitle') }), el('div', { class: 'row' }, copy, file), el('div', { class: 'row' }, reset), box);
 }
 
+// ---------- PDF report ----------
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const el2 = document.createElement('script');
+    el2.src = src;
+    el2.onload = resolve;
+    el2.onerror = () => reject(new Error(`Could not load ${src}`));
+    document.head.append(el2);
+  });
+}
+async function fetchBase64(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  const u8 = new Uint8Array(await res.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+async function makePdf() {
+  const box = $('pdf-msg'), btn = $('pdf');
+  btn.disabled = true;
+  setMsg(box, t('pdfBuilding'));
+  try {
+    await refresh(false);                         // use the latest data
+    if (!sheet) throw new Error(t('netError'));
+    if (!window.jspdf) await loadScript('./vendor/jspdf.umd.min.js');
+    const [regular, bold, mod] = await Promise.all([
+      fetchBase64('./vendor/fonts/DejaVuSans.ttf'),
+      fetchBase64('./vendor/fonts/DejaVuSans-Bold.ttf'),
+      import('./report.js'),
+    ]);
+    const lang = $('rlang').value === 'fr' ? 'fr' : 'en';
+    const doc = mod.buildReport(window.jspdf.jsPDF, { regular, bold },
+      { categories: sheet.categories, items: sheet.items, exportedAt: new Date().toISOString(), exporterRole: session.role }, { lang });
+    const name = `sanctuaire-test1-report-${new Date().toISOString().slice(0, 10)}-${lang}.pdf`;
+    doc.save(name);
+    setMsg(box, t('pdfDone', name), 'ok');
+  } catch (e) {
+    console.error(e);
+    setMsg(box, t('pdfFail', e.message), 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ---------- start ----------
 $('enter').addEventListener('click', doLogin);
 $('check').addEventListener('click', diagnose);
 $('pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 $('refresh').addEventListener('click', () => refresh(true));
 $('logout').addEventListener('click', doLogout);
+$('pdf').addEventListener('click', makePdf);
 $('filter').addEventListener('change', () => { filterMode = $('filter').value; if (sheet) renderSheet(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && session) refresh(false); });
 
