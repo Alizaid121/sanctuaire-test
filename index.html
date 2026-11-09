@@ -34,6 +34,10 @@ input{font:inherit;width:100%;min-height:52px;border:1px solid var(--line);borde
 #install #ib{width:100%;margin-top:12px}
 #inote{min-height:1.4em;font-size:.92rem;color:var(--muted)}
 .lcard img{width:72px;height:72px;border-radius:16px;display:block;margin-bottom:10px}
+.prog{margin-top:10px}.track{height:10px;background:#E7DCC6;border-radius:99px;overflow:hidden}.track i{display:block;height:100%;background:var(--green);transition:width .5s}
+.pl{margin:.5em 0 .1em}.card{position:relative}.card.done{border-color:var(--green)}
+.tick{position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:50%;background:var(--green);color:#fff;display:grid;place-items:center;font-weight:600}
+.overall{background:#dcebe2;color:var(--green);font-weight:600;border-radius:12px;padding:10px 14px;margin:14px 0}
 #app{padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
 main{max-width:860px;margin:0 auto;padding:22px 16px 60px}
 .eyebrow{color:var(--brass);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:.8rem;margin:0}
@@ -122,6 +126,11 @@ const I18N = {
     privacy: 'Only the two testers can sign in. The tests hold readable sentences, so keep exported reports private. The test database is deleted when testing ends.',
     steps: 'Steps', good: 'Good to know', adminOnly: 'For the admin', partnerOnly: 'For the French speaker',
     testsTitle: 'Tests', testsIntro: 'Every test of the project. Open one to start or continue.', version: 'Version',
+    loading: 'Loading progress…', notConn: 'Not connected: sign in again to see progress.', progErr: 'Progress is not available right now.',
+    capSoon: 'Completion for each person will appear here in the next step.', completed: 'Completed',
+    overall: (c, n) => `${c} of ${n} tests completed`,
+    counts: { '1': (d, t) => `${d} of ${t} sentences done`, '2': (d, t) => `${d} of ${t} texts agreed` },
+    roleShort: { admin: 'English speaker', partner: 'French speaker' },
     guidesTitle: 'Guides', guidesIntro: 'Each test has a short guide. Open one at any time.',
     profileTitle: 'Your profile', name: 'Name', role: 'Role', roleAdmin: 'Admin (English speaker)', rolePartner: 'Partner (French speaker)',
     language: 'Language', sessions: 'Test sign-ins', on: 'Connected', off: 'Not connected: that test will ask for your PIN',
@@ -151,6 +160,11 @@ const I18N = {
     privacy: 'Seules les deux personnes qui testent peuvent se connecter. Les tests contiennent des phrases lisibles : garde les rapports exportés privés. La base de test est supprimée à la fin des tests.',
     steps: 'Étapes', good: 'Bon à savoir', adminOnly: 'Pour l’admin', partnerOnly: 'Pour la francophone',
     testsTitle: 'Tests', testsIntro: 'Tous les tests du projet. Ouvre-en un pour commencer ou continuer.', version: 'Version',
+    loading: 'Chargement de la progression…', notConn: 'Non connecté : reconnecte-toi pour voir la progression.', progErr: 'La progression n’est pas disponible pour le moment.',
+    capSoon: 'La validation de chaque personne apparaîtra ici à l’étape suivante.', completed: 'Terminé',
+    overall: (c, n) => `${c} test${c > 1 ? 's' : ''} terminé${c > 1 ? 's' : ''} sur ${n}`,
+    counts: { '1': (d, t) => `${d} phrases sur ${t} terminées`, '2': (d, t) => `${d} textes sur ${t} validés` },
+    roleShort: { admin: 'anglophone', partner: 'francophone' },
     guidesTitle: 'Guides', guidesIntro: 'Chaque test a un court guide. Ouvre-le quand tu veux.',
     profileTitle: 'Ton profil', name: 'Nom', role: 'Rôle', roleAdmin: 'Admin (anglophone)', rolePartner: 'Partenaire (francophone)',
     language: 'Langue', sessions: 'Connexions aux tests', on: 'Connecté', off: 'Non connecté : ce test te demandera ton code PIN',
@@ -300,7 +314,7 @@ async function signOut() {
 function card(t) {
   const c = L().cards[t.id];
   if (t.soon) return `<article class="card soon"><span class="tag">${L().soon}</span><h3>${c.t}</h3><p>${c.d}</p></article>`;
-  return `<article class="card"><span class="tag live">${L().open}</span><h3>${c.t}</h3><p>${c.d}</p><p class="who2">${c.w}</p>
+  return `<article class="card"><span class="tick hidden" role="img" aria-label="${L().completed}">✓</span><span class="tag live">${L().open}</span><h3>${c.t}</h3><p>${c.d}</p><p class="who2">${c.w}</p><div class="prog" data-prog="${t.id}"></div>
     <div class="row"><a class="btn" href="#/open/${t.id}">${seen()[t.id] ? L().openTest : L().start}</a><a class="btn alt" href="#/guide/${t.id}">${L().guide}</a></div></article>`;
 }
 function vHome() {
@@ -314,7 +328,7 @@ function vHome() {
 }
 function vTests() {
   const l = L();
-  return `<h1>${l.testsTitle}</h1><p>${l.testsIntro}</p><div class="cards">${TESTS.map(card).join('')}</div>`;
+  return `<h1>${l.testsTitle}</h1><p>${l.testsIntro}</p><div id="overall" class="overall hidden"></div><div class="cards">${TESTS.map(card).join('')}</div>`;
 }
 function vGuides() {
   const l = L();
@@ -341,6 +355,54 @@ function vProfile() {
     <p><button id="so" type="button" class="alt">${l.signout}</button></p>`;
 }
 
+// ---- progress (read from the existing test functions; nothing new on the server) ----
+const PROG = {}; let progAt = 0, progBusy = false, cur = 'home';
+const t2strings = () => window.T2 && T2.STRINGS ? Promise.resolve() : new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'sanctuaire-test2/strings.js'; s.onload = ok; s.onerror = no; document.head.appendChild(s); });
+async function prog1() {
+  if (!sess.tok1) { PROG['1'] = { err: 'conn' }; return; }
+  try {
+    const r = await rpc('t1_get_sheet', { p_token: sess.tok1 });
+    if (!r || !r.ok) { PROG['1'] = { err: r && r.error === 'auth' ? 'conn' : 'x' }; return; }
+    const per = r.categories.length * 3, by = {};
+    ['admin', 'partner'].forEach((a) => { by[a] = { d: r.items.filter((i) => i.author === a && i.status === 'done').length, t: per }; });
+    PROG['1'] = { done: by.admin.d + by.partner.d, total: per * 2, by };
+  } catch (e) { PROG['1'] = { err: 'x' }; }
+}
+async function prog2() {
+  if (!sess.tok2) { PROG['2'] = { err: 'conn' }; return; }
+  try {
+    await t2strings();
+    const r = await rpc('t2_get_sheet', { p_token: sess.tok2 });
+    if (!r || !r.ok) { PROG['2'] = { err: r && r.error === 'auth' ? 'conn' : 'x' }; return; }
+    PROG['2'] = { done: r.items.filter((i) => i.status === 'agreed').length, total: T2.STRINGS.length };
+  } catch (e) { PROG['2'] = { err: 'x' }; }
+}
+function paintProgress() {
+  const l = L(); let c = 0, n = 0;
+  document.querySelectorAll('[data-prog]').forEach((el) => {
+    const id = el.dataset.prog, p = PROG[id], card = el.closest('.card'), tick = card.querySelector('.tick');
+    let html = '', ok = false;
+    if (id === 'cap') html = `<p class="who2">${l.capSoon}</p>`;
+    else if (!p) html = `<p class="who2">${l.loading}</p>`;
+    else if (p.err) html = `<p class="who2 no">${p.err === 'conn' ? l.notConn : l.progErr}</p>`;
+    else {
+      const pct = p.total ? Math.floor(100 * p.done / p.total) : 0; ok = p.total > 0 && p.done === p.total;
+      html = `<div class="track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div><p class="pl"><b>${pct}%</b> · ${l.counts[id](p.done, p.total)}</p>` +
+        (p.by ? `<p class="who2">${l.roleShort.admin} ${p.by.admin.d}/${p.by.admin.t} · ${l.roleShort.partner} ${p.by.partner.d}/${p.by.partner.t}</p>` : '');
+    }
+    el.innerHTML = html; card.classList.toggle('done', ok); tick.classList.toggle('hidden', !ok);
+  });
+  ['1', '2'].forEach((id) => { if (PROG[id] && !PROG[id].err) { n++; if (PROG[id].total > 0 && PROG[id].done === PROG[id].total) c++; } });
+  const ov = $('overall'); if (ov) { ov.textContent = l.overall(c, 2); ov.classList.toggle('hidden', n === 0); }
+}
+async function loadProgress(force) {
+  if (!sess || progBusy || (!force && Date.now() - progAt < 20000)) { paintProgress(); return; }
+  progBusy = true;
+  try { await Promise.all([prog1(), prog2()]); progAt = Date.now(); } finally { progBusy = false; }
+  paintProgress();
+}
+setInterval(() => { if (sess && !document.hidden && (cur === 'home' || cur === 'tests')) loadProgress(false); }, 30000);
+
 // ---- router ----
 function route() {
   if (!sess) return;
@@ -351,6 +413,8 @@ function route() {
   const v = r === 'tests' ? vTests() : r === 'guides' ? vGuides() : r === 'guide' ? vGuide(id) : r === 'profile' ? vProfile() : vHome();
   $('view').innerHTML = v; window.scrollTo(0, 0);
   const so = $('so'); if (so) so.onclick = signOut;
+  cur = r === 'tests' ? 'tests' : (r === 'home' || !r) ? 'home' : r;
+  if (cur === 'home' || cur === 'tests') loadProgress(false);
   if (bar) bar.setActive(r === 'guide' || r === 'guides' ? 'guides' : r === 'profile' ? 'profile' : r === 'tests' || r === 'open' ? 'tests' : 'home');
 }
 function chrome() { if (bar) bar.setLang(lang); document.documentElement.lang = lang; }
