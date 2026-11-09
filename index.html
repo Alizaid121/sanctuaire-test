@@ -38,6 +38,9 @@ input{font:inherit;width:100%;min-height:52px;border:1px solid var(--line);borde
 .pl{margin:.5em 0 .1em}.card{position:relative}.card.done{border-color:var(--green)}
 .tick{position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:50%;background:var(--green);color:#fff;display:grid;place-items:center;font-weight:600}
 .overall{background:#dcebe2;color:var(--green);font-weight:600;border-radius:12px;padding:10px 14px;margin:14px 0}
+.rrow{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;border-top:1px solid var(--line)}
+.rrow .rb{display:flex;flex-wrap:wrap;gap:8px}.rrow button{min-height:44px;padding:0 14px}
+#rmsg{min-height:1.5em;margin:10px 0;font-weight:600}
 #app{padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
 main{max-width:860px;margin:0 auto;padding:22px 16px 60px}
 .eyebrow{color:var(--brass);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:.8rem;margin:0}
@@ -134,7 +137,11 @@ const I18N = {
     guidesTitle: 'Guides', guidesIntro: 'Each test has a short guide. Open one at any time.',
     profileTitle: 'Your profile', name: 'Name', role: 'Role', roleAdmin: 'Admin (English speaker)', rolePartner: 'Partner (French speaker)',
     language: 'Language', sessions: 'Test sign-ins', on: 'Connected', off: 'Not connected: that test will ask for your PIN',
-    adminNote: 'As admin, you export the PDF reports from inside Test 1 and Test 2.',
+    adminNote: 'As admin, you download the PDF reports below.',
+    reportsTitle: 'Reports (PDF)', reportsIntro: 'Download the results of each test, in English or French. After a core update, the old version’s report stays here next to the new one.',
+    current: 'Current', ver: (n) => `Version ${n}`, saved: 'saved', loadingR: 'Loading reports…', rFail: 'Reports are not available. Run database/4-reports-setup.sql in Supabase, then reload.',
+    rBusy: 'Creating the PDF…', rDone: (n) => `Downloaded ${n}`, rErr: 'The PDF could not be created. Try again.', noArch: 'No earlier versions yet.',
+    pEn: 'English speaker', pFr: 'French speaker', pdfEn: 'PDF · English', pdfFr: 'PDF · Français',
     expiry: 'The sign-in lasts about 11 hours on this phone.',
     wrong: (n) => `Wrong PIN. ${n} ${n === 1 ? 'try' : 'tries'} left.`,
     locked: (m) => `Too many wrong tries. Try again in ${m} min.`,
@@ -168,7 +175,11 @@ const I18N = {
     guidesTitle: 'Guides', guidesIntro: 'Chaque test a un court guide. Ouvre-le quand tu veux.',
     profileTitle: 'Ton profil', name: 'Nom', role: 'Rôle', roleAdmin: 'Admin (anglophone)', rolePartner: 'Partenaire (francophone)',
     language: 'Langue', sessions: 'Connexions aux tests', on: 'Connecté', off: 'Non connecté : ce test te demandera ton code PIN',
-    adminNote: 'En tant qu’admin, tu exportes les rapports PDF depuis le Test 1 et le Test 2.',
+    adminNote: 'En tant qu’admin, tu télécharges les rapports PDF ci-dessous.',
+    reportsTitle: 'Rapports (PDF)', reportsIntro: 'Télécharge les résultats de chaque test, en anglais ou en français. Après une mise à jour majeure, le rapport de l’ancienne version reste ici à côté du nouveau.',
+    current: 'Actuelle', ver: (n) => `Version ${n}`, saved: 'enregistrée', loadingR: 'Chargement des rapports…', rFail: 'Les rapports ne sont pas disponibles. Lance database/4-reports-setup.sql dans Supabase, puis recharge.',
+    rBusy: 'Création du PDF…', rDone: (n) => `Téléchargé : ${n}`, rErr: 'Le PDF n’a pas pu être créé. Réessaie.', noArch: 'Pas encore d’anciennes versions.',
+    pEn: 'Anglophone', pFr: 'Francophone', pdfEn: 'PDF · English', pdfFr: 'PDF · Français',
     expiry: 'La connexion dure environ 11 heures sur ce téléphone.',
     wrong: (n) => `Code incorrect. Il reste ${n} essai${n > 1 ? 's' : ''}.`,
     locked: (m) => `Trop d’essais incorrects. Réessaie dans ${m} min.`,
@@ -352,7 +363,8 @@ function vProfile() {
     <dt>${l.language}</dt><dd>${lang === 'en' ? 'English' : 'Français'}</dd>
     <dt>${l.sessions}</dt><dd><div class="ok">Test 1: ${l.on}</div>${st(!!get(K2), 'Test 2')}</dd></dl>
     ${s.role === 'admin' ? `<p>${l.adminNote}</p>` : ''}<p class="note">${l.expiry}</p><p class="note">Sanctuaire Test · ${l.version} ${VERSION}</p>
-    <p><button id="so" type="button" class="alt">${l.signout}</button></p>`;
+    ${s.role === 'admin' ? `<h2>${l.reportsTitle}</h2><p>${l.reportsIntro}</p><div id="rmsg" role="status"></div><div id="reports"><p class="who2">${l.loadingR}</p></div>` : ''}
+    <p style="margin-top:26px"><button id="so" type="button" class="alt">${l.signout}</button></p>`;
 }
 
 // ---- progress (read from the existing test functions; nothing new on the server) ----
@@ -412,6 +424,51 @@ async function loadProgress(force) {
 }
 setInterval(() => { if (sess && !document.hidden && (cur === 'home' || cur === 'tests')) loadProgress(false); }, 30000);
 
+// ---- reports (admin only; every PDF is built in the browser) ----
+const rbtns = (a) => `<span class="rb"><button type="button" class="alt" ${a} data-lang="en">${L().pdfEn}</button><button type="button" class="alt" ${a} data-lang="fr">${L().pdfFr}</button></span>`;
+const rrow = (label, a) => `<div class="rrow"><span>${label}</span>${rbtns(a)}</div>`;
+function testRows(id, ver, arch, when) {
+  const l = L(), head = arch ? `${l.ver(ver)} · ${l.saved} ${when}` : `${l.current} · ${l.ver(ver)}`, base = `data-test="${id}" data-ver="${ver}" data-arch="${arch || ''}"`;
+  if (id !== 'cap') return rrow(esc(head), base);
+  return `<div class="rrow"><b>${esc(head)}</b></div>` + ['admin', 'partner'].map((r) => rrow(r === 'admin' ? l.pEn : l.pFr, `${base} data-role="${r}"`)).join('');
+}
+async function loadReports() {
+  const box = $('reports'); if (!box) return;
+  const l = L();
+  if (!sess.tok2) { box.innerHTML = `<p class="who2 no">${l.notConn}</p>`; return; }
+  try {
+    const r = await rpc('hub_reports_index', { p_token: sess.tok2 });
+    if (!r || !r.ok) throw new Error('x');
+    box.innerHTML = ['1', '2', 'cap'].map((id) => {
+      const arch = r.archives.filter((a) => a.test_id === id);
+      const old = arch.map((a) => testRows(id, a.version, a.id, new Date(a.taken_at).toLocaleDateString(lang === 'fr' ? 'fr-FR' : 'en-GB')) + (a.label ? `<p class="who2" style="margin:0 0 6px">${esc(a.label)}</p>` : '')).join('');
+      return `<article class="card" style="margin-bottom:14px"><h3>${l.cards[id].t}</h3>${testRows(id, r.current[id] || 1, null)}${old || `<p class="who2">${l.noArch}</p>`}</article>`;
+    }).join('');
+    box.onclick = (e) => { const b = e.target.closest('button[data-test]'); if (b) doExport(b); };
+  } catch (e) { box.innerHTML = `<p class="who2 no">${l.rFail}</p>`; }
+}
+async function doExport(b) {
+  const d = b.dataset, l = L(), msg = $('rmsg'); msg.className = ''; msg.textContent = l.rBusy; b.disabled = true;
+  try {
+    let data;
+    if (d.arch) {
+      const r = await rpc('hub_archive_get', { p_token: sess.tok2, p_id: Number(d.arch) }); if (!r.ok) throw new Error('arch');
+      data = r.snapshot;
+      if (d.test === 'cap') { const row = (data.people || []).find((x) => x.role === d.role); data = { role: d.role, data: row ? row.data : {} }; }
+    } else if (d.test === '1') {
+      const r = await rpc('t1_get_sheet', { p_token: sess.tok1 }); if (!r.ok) throw new Error('t1'); data = { categories: r.categories, items: r.items };
+    } else if (d.test === '2') {
+      const r = await rpc('t2_get_sheet', { p_token: sess.tok2 }); if (!r.ok) throw new Error('t2'); data = { items: r.items, events: r.events };
+    } else {
+      const r = await rpc('hub_cap_get', { p_token: sess.tok2, p_role: d.role }); if (!r.ok) throw new Error('cap'); data = { role: d.role, data: r.data };
+    }
+    const mod = await import('./reports.js');
+    const name = await mod.makeReport({ test: d.test, lang: d.lang, version: d.ver, data });
+    msg.className = 'ok'; msg.textContent = l.rDone(name);
+  } catch (e) { console.error(e); msg.className = 'no'; msg.textContent = l.rErr; }
+  finally { b.disabled = false; }
+}
+
 // ---- router ----
 function route() {
   if (!sess) return;
@@ -422,6 +479,7 @@ function route() {
   const v = r === 'tests' ? vTests() : r === 'guides' ? vGuides() : r === 'guide' ? vGuide(id) : r === 'profile' ? vProfile() : vHome();
   $('view').innerHTML = v; window.scrollTo(0, 0);
   const so = $('so'); if (so) so.onclick = signOut;
+  if (r === 'profile' && sess.role === 'admin') loadReports();
   cur = r === 'tests' ? 'tests' : (r === 'home' || !r) ? 'home' : r;
   if (cur === 'home' || cur === 'tests') loadProgress(false);
   if (bar) bar.setActive(r === 'guide' || r === 'guides' ? 'guides' : r === 'profile' ? 'profile' : r === 'tests' || r === 'open' ? 'tests' : 'home');

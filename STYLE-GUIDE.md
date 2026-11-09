@@ -63,6 +63,12 @@ Honest limit: static pages are public. The page redirect is a door sign; real pr
 - Tests 1 and 2 are counted live from their own server functions. A test whose results are stored per person (phone check) saves through `hub_cap_save` and is read with `hub_cap_status`; it authenticates with the Test 2 sign-in.
 - Every test has a version in `hub_tests`. Results are stored per (test, version, person) in `hub_results`. A core update (translator model, provider, tool) raises the version, so progress and the tick reset while the old results stay stored for the old report. Style, fixes and wording never change the version.
 
+## Reports and core updates
+- No test page has an export button. Reports live in Profile (admin only): one PDF per test, English or French. Tests 1 and 2 have one shared report; the phone check asks which person (English speaker or French speaker). PDF only.
+- Reports are built in the browser by `reports.js` (Test 1 and 2 use their own `report.js`). Server access is admin-only: `hub_reports_index`, `hub_archive_get`, `hub_cap_get`.
+- **Core update procedure** (new translator model, new provider or tool; not style, fixes or wording). Before shipping the update, in the Supabase SQL Editor run `select hub_core_update('<test id>', '<short label>');`. It freezes the current results into `hub_archives` and raises the version. Tests 1 and 2 must then also clear or restructure their live rows in the same update, so progress and the green tick start again. The old report then appears in Profile next to the new one.
+- Archived Test 1 and Test 2 snapshots are copies of the table rows. Check the first archived PDF of each after its first core update.
+
 ## PWA
 `manifest.webmanifest`, `sw.js` (caches nothing, on purpose), icons in `icons/` (cropped from the splash art), `assets/splash.jpg`. The hub shows an Install screen when opened in a browser (skippable once per browser session). Chrome decides when it offers the install prompt.
 
