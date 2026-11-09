@@ -22,6 +22,7 @@ button:focus-visible,textarea:focus-visible,select:focus-visible,input:focus-vis
 .frbox.sug{background:#F7EBD2;border-color:#E3CE9E}.frbox.fin{background:#E3EFE7;border-color:#B7D4C3}
 .form{background:var(--panel);border-color:var(--line)}
 .meta code{background:var(--sand)}
-.bar{background:#E7DCC6}
+.bar:has(> i){background:#E7DCC6}
+#view-login,#loginCard{display:none!important}   /* login lives in the hub only */
 .chip{background:var(--panel)}
 a{color:var(--dawn)}

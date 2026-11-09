@@ -46,14 +46,26 @@
       destroy: function () { top.remove(); tabs.remove(); }
     };
   }
-  window.SBar = { mount: mount };
+  var K = { '1': 'sanctuaire-t1-session-v1', '2': 'sanctuaire-test2-session-v1' };
+  var root = new URL('../', location.href).href;
+  function hubLang() { try { return (JSON.parse(localStorage.getItem(HUB) || 'null') || {}).lang || 'en'; } catch (e) { return 'en'; } }
+  // clear every session and go back to the hub login (used when a session is missing or ended)
+  function toHub() {
+    [HUB, K['1'], K['2']].forEach(function (k) { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } });
+    document.documentElement.style.display = 'none';
+    location.replace(root + '#/login');
+  }
+  window.SBar = { mount: mount, lang: hubLang, toHub: toHub };
   if (window.SBAR_HUB) return;
 
   // ---- test pages ----
   var s = null; try { s = JSON.parse(localStorage.getItem(HUB) || 'null'); } catch (e) { /* ignore */ }
-  var root = new URL('../', location.href).href;
-  if (!s || !s.at || Date.now() - s.at > 11 * 3600 * 1000) { location.replace(root + '#/login'); return; }
+  if (!s || !s.at || Date.now() - s.at > 11 * 3600 * 1000) { toHub(); return; }
   var p = location.pathname;
   var id = p.indexOf('sanctuaire-test1') > -1 ? '1' : p.indexOf('sanctuaire-test2') > -1 ? '2' : 'cap';
-  mount({ base: root, lang: s.lang, guideId: id, onLang: function (l) { s.lang = l; try { localStorage.setItem(HUB, JSON.stringify(s)); } catch (e) { /* ignore */ } } }).setActive('tests');
+  if (K[id]) {                                  // the test's own server session must exist too
+    var ts = null; try { ts = JSON.parse(localStorage.getItem(K[id]) || 'null'); } catch (e) { /* ignore */ }
+    if (!ts || !ts.token || Date.now() - ts.at > 11 * 3600 * 1000) { toHub(); return; }
+  }
+  mount({ base: root, lang: s.lang, guideId: id, onLang: function (l) { s.lang = l; try { localStorage.setItem(HUB, JSON.stringify(s)); } catch (e) { /* ignore */ } window.dispatchEvent(new CustomEvent('sanctuaire-lang', { detail: l })); } }).setActive('tests');
 })();

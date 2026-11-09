@@ -39,7 +39,7 @@ Headings: Fraunces 600. Body and buttons: Inter 400/600. Body text 17 px; nothin
 - Progress bar: sand track, `--good` fill. A completed test shows a green tick.
 
 ## 6. Language
-Roles decide the page language: admin (English speaker) sees English, partner (French speaker) sees French. French uses "tu". The EN/FR button changes the bars and the hub; test pages keep their own role language unless a page says otherwise.
+One language setting for the whole site: the EN/FR button in the top bar. At sign-in it defaults by role (admin English, partner French) and the choice is remembered. Every page must follow it and listen for the `sanctuaire-lang` event (`window.addEventListener('sanctuaire-lang', e => ... e.detail)`), read the current value with `SBar.lang()`, and have no language selector of its own. French uses "tu".
 
 ## 7. Starting a new test page
 ```html
@@ -52,8 +52,13 @@ Roles decide the page language: admin (English speaker) sees English, partner (F
 ```
 Use the variable names above (`--bg --panel --ink --muted --line --accent --good --warn --bad`). Add the test to `TESTS` and `GUIDES` in the hub `index.html`.
 
-## 8. Sessions (the hub signs in to every test)
-Hub: `sanctuaire-hub-v1` (11 hours). Test 1: `sanctuaire-t1-session-v1`. Test 2: `sanctuaire-test2-session-v1`. Shape `{token, role, label, at}`. A new test with its own login function and key must be added to the hub login.
+## 8. Sessions: one sign-in, in the hub only
+The hub signs in to every test with one PIN. Test pages have no login form, no log-out and no refresh button; they poll by themselves. If a page finds no valid hub session or no valid test session, it calls `SBar.toHub()` (clears all sessions, returns to the hub login). Sign-out is in Profile only.
+Keys: hub `sanctuaire-hub-v1` (11 hours); Test 1 `sanctuaire-t1-session-v1`; Test 2 `sanctuaire-test2-session-v1`. Shape `{token, role, label, at}`. A new test with its own login function and key must be added to the hub login and to `K` in `hub-bar.js`.
+Honest limit: static pages are public. The page redirect is a door sign; real protection is the server, which refuses every data call without a valid token. A page with no server calls (the phone check) holds no private data.
+
+## PWA
+`manifest.webmanifest`, `sw.js` (caches nothing, on purpose), icons in `icons/` (cropped from the splash art), `assets/splash.jpg`. The hub shows an Install screen when opened in a browser (skippable once per browser session). Chrome decides when it offers the install prompt.
 
 ## 9. Rules for every update
 Core changes (translator model, provider, tool) start a new test version; style, fixes and wording do not. Test 1 and 2 data are readable text: keep exports private and delete the test database when testing ends.
