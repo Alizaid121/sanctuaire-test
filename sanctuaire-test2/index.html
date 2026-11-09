@@ -124,13 +124,7 @@
   <div id="list"></div>
 
   <div id="adminCard" class="card hidden">
-    <h2 id="repTitle"></h2>
-    <p class="muted" id="repHelp"></p>
-    <label for="repLang" id="repLangL"></label>
-    <select id="repLang"><option value="en">English</option><option value="fr">Français</option></select>
-    <div class="row"><button id="pdfBtn"></button></div>
-    <div id="repMsg" class="banner hidden" role="status"></div>
-    <h2 id="resetTitle" style="margin-top:1.4rem"></h2>
+    <h2 id="resetTitle"></h2>
     <p class="muted" id="resetHelp"></p>
     <div class="row"><input id="resetWord" type="text" style="max-width:12rem" autocomplete="off"><button id="resetBtn" class="danger"></button></div>
   </div>
@@ -336,7 +330,6 @@ function buildChrome() {
   const admin = session.role === 'admin';
   $('adminCard').classList.toggle('hidden', !admin);
   if (admin) {
-    $('repTitle').textContent = t('repTitle'); $('repHelp').textContent = t('repHelp'); $('repLangL').textContent = t('repLang'); $('pdfBtn').textContent = t('pdf');
     $('resetTitle').textContent = t('resetTitle'); $('resetHelp').textContent = t('resetHelp'); $('resetBtn').textContent = t('reset'); $('resetWord').placeholder = 'RESET';
   }
 }
@@ -516,23 +509,6 @@ async function act(sid, action, extra) {
 /* ---------- PDF report (admin) ---------- */
 function loadScript(src) { return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('load ' + src)); document.head.append(s); }); }
 async function fetchB64(url) { const r = await fetch(url); if (!r.ok) throw new Error('font'); const b = new Uint8Array(await r.arrayBuffer()); let s = ''; for (let i = 0; i < b.length; i += 0x8000) s += String.fromCharCode.apply(null, b.subarray(i, i + 0x8000)); return btoa(s); }
-async function makePdf() {
-  const msg = $('repMsg'); msg.className = 'banner'; msg.textContent = t('pdfBusy'); $('pdfBtn').disabled = true;
-  try {
-    if (!window.jspdf) await loadScript(VENDOR + 'jspdf.umd.min.js');
-    if (!window.buildT2Report) await loadScript('report.js');
-    const [reg, bold] = await Promise.all([fetchB64(VENDOR + 'fonts/DejaVuSans.ttf'), fetchB64(VENDOR + 'fonts/DejaVuSans-Bold.ttf')]);
-    const r = await call('t2_get_sheet', { p_token: session.token });
-    if (!r.ok) throw new Error('auth');
-    const items = {}, events = {};
-    for (const i of r.items) items[i.sid] = i;
-    for (const e of r.events) (events[e.sid] = events[e.sid] || []).push(e);
-    const doc = window.buildT2Report(window.jspdf.jsPDF, { reg, bold }, { T2, items, events, now: new Date(), lang: $('repLang').value });
-    doc.save(`sanctuaire-test2-report-${new Date().toISOString().slice(0, 10)}.pdf`);
-    msg.className = 'banner ok'; msg.textContent = t('pdfDone');
-  } catch (e) { msg.className = 'banner err'; msg.textContent = t('pdfFail'); }
-  finally { $('pdfBtn').disabled = false; }
-}
 async function doReset() {
   const r = await call('t2_reset_all', { p_token: session.token, p_confirm: $('resetWord').value.trim() });
   if (r.ok) { $('resetWord').value = ''; ui.forms = {}; flash(t('resetDone'), 'ok'); await refresh(true, true); }
@@ -546,7 +522,6 @@ $('checkBtn').addEventListener('click', checkConnection);
 $('fStatus').addEventListener('change', (e) => { ui.fStatus = e.target.value; renderAll(); });
 $('fCat').addEventListener('change', (e) => { ui.fCat = e.target.value; renderAll(); });
 $('fSearch').addEventListener('input', (e) => { ui.q = e.target.value.trim(); renderAll(); });
-$('pdfBtn').addEventListener('click', makePdf);
 $('resetBtn').addEventListener('click', doReset);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && session) refresh(false, true); });
 if (loadSession()) enter().catch(() => showLogin()); else showLogin();
