@@ -106,10 +106,6 @@
       <h1 id="appTitle"></h1>
       <p class="muted" id="who"></p>
     </div>
-    <div class="row" style="margin-top:0.6rem">
-      <button id="refreshBtn" class="secondary"></button>
-      <button id="logoutBtn" class="secondary"></button>
-    </div>
   </div>
   <p id="how"></p>
   <div id="msg" class="banner hidden" role="status"></div>
@@ -288,6 +284,7 @@ function clearSession() { session = null; try { localStorage.removeItem(SESSION_
 
 /* ---------- login ---------- */
 function showLogin(message) {
+  SBar.toHub(); return;                       // one sign-in only: the hub
   stopPoll(); $('app').classList.add('hidden'); $('loginCard').classList.remove('hidden');
   LANG = 'en';
   $('loginTitle').textContent = `${I18N.en.loginTitle}`;
@@ -318,7 +315,7 @@ async function checkConnection() {
 
 /* ---------- entering the sheet ---------- */
 async function enter() {
-  LANG = DEFAULT_ROLE_LANG[session.role] || 'en';
+  LANG = SBar.lang();                          // follows the top-bar language (defaults by role at sign-in)
   document.documentElement.lang = LANG;
   $('loginCard').classList.add('hidden'); $('app').classList.remove('hidden');
   buildChrome();
@@ -330,7 +327,6 @@ function buildChrome() {
   $('appTitle').textContent = t('title');
   $('who').textContent = t('signedIn', session.role === 'admin' ? t('roleAdmin') : t('rolePartner'));
   $('how').textContent = session.role === 'admin' ? t('howAdmin') : t('howPartner');
-  $('refreshBtn').textContent = t('refresh'); $('logoutBtn').textContent = t('logout');
   $('fStatusL').textContent = t('fStatus'); $('fCatL').textContent = t('fCat'); $('fSearchL').textContent = t('fSearch');
   $('fSearch').placeholder = t('searchPh');
   const fs = $('fStatus'); fs.replaceChildren(...['all', 'mine', 'other', 'open', 'agreed'].map((k) => el('option', { value: k, text: t('f_' + k) })));
@@ -547,8 +543,6 @@ async function doReset() {
 $('loginBtn').addEventListener('click', doLogin);
 $('pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 $('checkBtn').addEventListener('click', checkConnection);
-$('refreshBtn').addEventListener('click', () => refresh(true));
-$('logoutBtn').addEventListener('click', async () => { try { await call('t2_logout', { p_token: session.token }); } catch (e) { /* ignore */ } clearSession(); showLogin(); });
 $('fStatus').addEventListener('change', (e) => { ui.fStatus = e.target.value; renderAll(); });
 $('fCat').addEventListener('change', (e) => { ui.fCat = e.target.value; renderAll(); });
 $('fSearch').addEventListener('input', (e) => { ui.q = e.target.value.trim(); renderAll(); });
@@ -556,6 +550,7 @@ $('pdfBtn').addEventListener('click', makePdf);
 $('resetBtn').addEventListener('click', doReset);
 document.addEventListener('visibilitychange', () => { if (!document.hidden && session) refresh(false, true); });
 if (loadSession()) enter().catch(() => showLogin()); else showLogin();
+window.addEventListener('sanctuaire-lang', (e) => { LANG = e.detail; document.documentElement.lang = LANG; buildChrome(); refresh(true, true); });
 </script>
 </body>
 </html>
