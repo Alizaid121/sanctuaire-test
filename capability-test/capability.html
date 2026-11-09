@@ -41,10 +41,6 @@
 <main>
   <h1 id="t-title"></h1>
   <p class="muted" id="t-intro"></p>
-  <div class="row" style="align-items:center; margin-top:.3rem">
-    <div><label for="lang" id="t-lang"></label>
-      <select id="lang"><option value="en">English</option><option value="fr">Français</option></select></div>
-  </div>
 
   <section class="card">
     <h2 id="t-h-basic"></h2>
@@ -143,7 +139,7 @@ const I18N = {
     },
   },
 };
-let L = (navigator.language || 'en').toLowerCase().startsWith('fr') ? 'fr' : 'en';
+let L = (window.SBar && SBar.lang()) || 'en';       // follows the top bar (French by default for the French speaker)
 const t = () => I18N[L];
 
 // ---------- state ----------
@@ -432,18 +428,17 @@ function reportText() {
 function applyLang() {
   const x = t();
   document.documentElement.lang = L;
-  $('t-title').textContent = x.title; $('t-intro').textContent = x.intro; $('t-lang').textContent = x.lang;
+  $('t-title').textContent = x.title; $('t-intro').textContent = x.intro;
   $('t-h-basic').textContent = x.hBasic; $('t-h-speed').textContent = x.hSpeed; $('t-h-mem').textContent = x.hMem; $('t-h-verdict').textContent = x.hVerdict; $('t-h-send').textContent = x.hSend;
   $('t-speed-help').textContent = x.speedHelp; $('t-mem-help').textContent = x.memHelp; $('t-send-help').textContent = x.sendHelp;
   if (!$('speed').disabled) $('speed').textContent = x.speedBtn;
   if (!$('mem').disabled) $('mem').textContent = x.memBtn;
   $('copy').textContent = x.copy; $('save').textContent = x.save;
-  $('lang').value = L;
   renderVerdict();
 }
 
 // ---------- start ----------
-$('lang').addEventListener('change', () => { L = $('lang').value; applyLang(); });
+window.addEventListener('sanctuaire-lang', (e) => { L = e.detail; applyLang(); });
 $('speed').addEventListener('click', speedTest);
 $('mem').addEventListener('click', memTest);
 $('copy').addEventListener('click', async () => {
