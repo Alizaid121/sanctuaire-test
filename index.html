@@ -127,9 +127,9 @@ const I18N = {
     steps: 'Steps', good: 'Good to know', adminOnly: 'For the admin', partnerOnly: 'For the French speaker',
     testsTitle: 'Tests', testsIntro: 'Every test of the project. Open one to start or continue.', version: 'Version',
     loading: 'Loading progress…', notConn: 'Not connected: sign in again to see progress.', progErr: 'Progress is not available right now.',
-    capSoon: 'Completion for each person will appear here in the next step.', completed: 'Completed',
+    completed: 'Completed',
     overall: (c, n) => `${c} of ${n} tests completed`,
-    counts: { '1': (d, t) => `${d} of ${t} sentences done`, '2': (d, t) => `${d} of ${t} texts agreed` },
+    counts: { '1': (d, t) => `${d} of ${t} sentences done`, '2': (d, t) => `${d} of ${t} texts agreed`, cap: (d, t) => `${d} of ${t} checks done by both of you` },
     roleShort: { admin: 'English speaker', partner: 'French speaker' },
     guidesTitle: 'Guides', guidesIntro: 'Each test has a short guide. Open one at any time.',
     profileTitle: 'Your profile', name: 'Name', role: 'Role', roleAdmin: 'Admin (English speaker)', rolePartner: 'Partner (French speaker)',
@@ -161,9 +161,9 @@ const I18N = {
     steps: 'Étapes', good: 'Bon à savoir', adminOnly: 'Pour l’admin', partnerOnly: 'Pour la francophone',
     testsTitle: 'Tests', testsIntro: 'Tous les tests du projet. Ouvre-en un pour commencer ou continuer.', version: 'Version',
     loading: 'Chargement de la progression…', notConn: 'Non connecté : reconnecte-toi pour voir la progression.', progErr: 'La progression n’est pas disponible pour le moment.',
-    capSoon: 'La validation de chaque personne apparaîtra ici à l’étape suivante.', completed: 'Terminé',
+    completed: 'Terminé',
     overall: (c, n) => `${c} test${c > 1 ? 's' : ''} terminé${c > 1 ? 's' : ''} sur ${n}`,
-    counts: { '1': (d, t) => `${d} phrases sur ${t} terminées`, '2': (d, t) => `${d} textes sur ${t} validés` },
+    counts: { '1': (d, t) => `${d} phrases sur ${t} terminées`, '2': (d, t) => `${d} textes sur ${t} validés`, cap: (d, t) => `${d} tests sur ${t} faits à vous deux` },
     roleShort: { admin: 'anglophone', partner: 'francophone' },
     guidesTitle: 'Guides', guidesIntro: 'Chaque test a un court guide. Ouvre-le quand tu veux.',
     profileTitle: 'Ton profil', name: 'Nom', role: 'Rôle', roleAdmin: 'Admin (anglophone)', rolePartner: 'Partenaire (francophone)',
@@ -368,6 +368,16 @@ async function prog1() {
     PROG['1'] = { done: by.admin.d + by.partner.d, total: per * 2, by };
   } catch (e) { PROG['1'] = { err: 'x' }; }
 }
+async function progCap() {
+  if (!sess.tok2) { PROG.cap = { err: 'conn' }; return; }
+  try {
+    const r = await rpc('hub_cap_status', { p_token: sess.tok2 });
+    if (!r || !r.ok) { PROG.cap = { err: r && r.error === 'auth' ? 'conn' : 'x' }; return; }
+    const by = {};
+    ['admin', 'partner'].forEach((a) => { const x = (r.people || {})[a] || {}; by[a] = { d: ['basic', 'speed', 'mem'].filter((k) => x[k]).length, t: 3 }; });
+    PROG.cap = { done: by.admin.d + by.partner.d, total: 6, by };
+  } catch (e) { PROG.cap = { err: 'x' }; }
+}
 async function prog2() {
   if (!sess.tok2) { PROG['2'] = { err: 'conn' }; return; }
   try {
@@ -382,23 +392,22 @@ function paintProgress() {
   document.querySelectorAll('[data-prog]').forEach((el) => {
     const id = el.dataset.prog, p = PROG[id], card = el.closest('.card'), tick = card.querySelector('.tick');
     let html = '', ok = false;
-    if (id === 'cap') html = `<p class="who2">${l.capSoon}</p>`;
-    else if (!p) html = `<p class="who2">${l.loading}</p>`;
+    if (!p) html = `<p class="who2">${l.loading}</p>`;
     else if (p.err) html = `<p class="who2 no">${p.err === 'conn' ? l.notConn : l.progErr}</p>`;
     else {
       const pct = p.total ? Math.floor(100 * p.done / p.total) : 0; ok = p.total > 0 && p.done === p.total;
       html = `<div class="track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><i style="width:${pct}%"></i></div><p class="pl"><b>${pct}%</b> · ${l.counts[id](p.done, p.total)}</p>` +
-        (p.by ? `<p class="who2">${l.roleShort.admin} ${p.by.admin.d}/${p.by.admin.t} · ${l.roleShort.partner} ${p.by.partner.d}/${p.by.partner.t}</p>` : '');
+        (p.by ? `<p class="who2">${['admin', 'partner'].map((a) => `${l.roleShort[a]} ${p.by[a].d}/${p.by[a].t}${p.by[a].d === p.by[a].t ? ' ✓' : ''}`).join(' · ')}</p>` : '');
     }
     el.innerHTML = html; card.classList.toggle('done', ok); tick.classList.toggle('hidden', !ok);
   });
-  ['1', '2'].forEach((id) => { if (PROG[id] && !PROG[id].err) { n++; if (PROG[id].total > 0 && PROG[id].done === PROG[id].total) c++; } });
-  const ov = $('overall'); if (ov) { ov.textContent = l.overall(c, 2); ov.classList.toggle('hidden', n === 0); }
+  ['1', '2', 'cap'].forEach((id) => { if (PROG[id] && !PROG[id].err) { n++; if (PROG[id].total > 0 && PROG[id].done === PROG[id].total) c++; } });
+  const ov = $('overall'); if (ov) { ov.textContent = l.overall(c, 3); ov.classList.toggle('hidden', n === 0); }
 }
 async function loadProgress(force) {
   if (!sess || progBusy || (!force && Date.now() - progAt < 20000)) { paintProgress(); return; }
   progBusy = true;
-  try { await Promise.all([prog1(), prog2()]); progAt = Date.now(); } finally { progBusy = false; }
+  try { await Promise.all([prog1(), prog2(), progCap()]); progAt = Date.now(); } finally { progBusy = false; }
   paintProgress();
 }
 setInterval(() => { if (sess && !document.hidden && (cur === 'home' || cur === 'tests')) loadProgress(false); }, 30000);

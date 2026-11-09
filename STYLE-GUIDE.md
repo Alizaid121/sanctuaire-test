@@ -57,6 +57,12 @@ The hub signs in to every test with one PIN. Test pages have no login form, no l
 Keys: hub `sanctuaire-hub-v1` (11 hours); Test 1 `sanctuaire-t1-session-v1`; Test 2 `sanctuaire-test2-session-v1`. Shape `{token, role, label, at}`. A new test with its own login function and key must be added to the hub login and to `K` in `hub-bar.js`.
 Honest limit: static pages are public. The page redirect is a door sign; real protection is the server, which refuses every data call without a valid token. A page with no server calls (the phone check) holds no private data.
 
+## Progress, completion and versions
+- Each test card on Home and Tests shows a progress bar and a rounded-down percentage. 100% only when every item is done. A completed test gets a green tick and a green card outline.
+- What counts as complete (set per test): Test 1 = all 54 sentences marked done; Test 2 = all texts agreed; phone check = each person has done its 3 checks (basic, speed, memory); the test is complete only when both people have.
+- Tests 1 and 2 are counted live from their own server functions. A test whose results are stored per person (phone check) saves through `hub_cap_save` and is read with `hub_cap_status`; it authenticates with the Test 2 sign-in.
+- Every test has a version in `hub_tests`. Results are stored per (test, version, person) in `hub_results`. A core update (translator model, provider, tool) raises the version, so progress and the tick reset while the old results stay stored for the old report. Style, fixes and wording never change the version.
+
 ## PWA
 `manifest.webmanifest`, `sw.js` (caches nothing, on purpose), icons in `icons/` (cropped from the splash art), `assets/splash.jpg`. The hub shows an Install screen when opened in a browser (skippable once per browser session). Chrome decides when it offers the install prompt.
 

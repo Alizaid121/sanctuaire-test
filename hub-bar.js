@@ -63,8 +63,9 @@
   if (!s || !s.at || Date.now() - s.at > 11 * 3600 * 1000) { toHub(); return; }
   var p = location.pathname;
   var id = p.indexOf('sanctuaire-test1') > -1 ? '1' : p.indexOf('sanctuaire-test2') > -1 ? '2' : 'cap';
-  if (K[id]) {                                  // the test's own server session must exist too
-    var ts = null; try { ts = JSON.parse(localStorage.getItem(K[id]) || 'null'); } catch (e) { /* ignore */ }
+  var sk = K[id] || (id === 'cap' ? K['2'] : null);   // the phone check saves with the Test 2 sign-in
+  if (sk) {                                     // the test's own server session must exist too
+    var ts = null; try { ts = JSON.parse(localStorage.getItem(sk) || 'null'); } catch (e) { /* ignore */ }
     if (!ts || !ts.token || Date.now() - ts.at > 11 * 3600 * 1000) { toHub(); return; }
   }
   mount({ base: root, lang: s.lang, guideId: id, onLang: function (l) { s.lang = l; try { localStorage.setItem(HUB, JSON.stringify(s)); } catch (e) { /* ignore */ } window.dispatchEvent(new CustomEvent('sanctuaire-lang', { detail: l })); } }).setActive('tests');
