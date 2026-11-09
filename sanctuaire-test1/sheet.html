@@ -103,10 +103,6 @@
           <h1 id="t-title"></h1>
           <div class="muted" id="who"></div>
         </div>
-        <div class="row">
-          <button id="refresh" type="button" class="secondary"></button>
-          <button id="logout" type="button" class="secondary"></button>
-        </div>
       </div>
       <p class="muted" id="how"></p>
       <div class="muted" id="updated" role="status"></div>
@@ -365,6 +361,7 @@ function configured() {
 
 // ---------- login ----------
 function showLogin(message) {
+  SBar.toHub(); return;                       // one sign-in only: the hub
   stopPolling();
   session = null; sheet = null;
   localStorage.removeItem(SESSION_KEY);
@@ -420,7 +417,7 @@ function restoreSession() {
 
 // ---------- entering the sheet ----------
 async function enter() {
-  LANG = session.role === 'admin' ? 'en' : 'fr';
+  LANG = SBar.lang();                          // follows the top-bar language (defaults by role at sign-in)
   document.documentElement.lang = LANG;
   $('view-login').classList.add('hidden');
   $('view-main').classList.remove('hidden');
@@ -435,8 +432,6 @@ function buildChrome() {
   $('t-title').textContent = t('title');
   $('who').textContent = `${t('signedIn')}: ${t('role_' + session.role)}`;
   $('how').textContent = t('how');
-  $('refresh').textContent = t('refresh');
-  $('logout').textContent = t('logout');
   $('l-filter').textContent = t('filter');
   $('t-report').textContent = t('reportTitle');
   $('t-report-help').textContent = t('reportHelp');
@@ -1088,8 +1083,6 @@ async function makePdf() {
 $('enter').addEventListener('click', doLogin);
 $('check').addEventListener('click', diagnose);
 $('pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
-$('refresh').addEventListener('click', () => refresh(true));
-$('logout').addEventListener('click', doLogout);
 $('pdf').addEventListener('click', makePdf);
 $('filter').addEventListener('change', () => { filterMode = $('filter').value; if (sheet) renderSheet(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && session) refresh(false); });
@@ -1102,6 +1095,7 @@ if (!configured()) {
 } else {
   showLogin();
 }
+window.addEventListener('sanctuaire-lang', () => location.reload());
 </script>
 </body>
 </html>
