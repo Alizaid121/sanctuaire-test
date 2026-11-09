@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sanctuaire · Test site</title>
+<title>Sanctuaire Test</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600&family=Inter:wght@400;600&display=swap">
 <style>
@@ -23,11 +23,7 @@ a{color:var(--cedar)}
 .sub{color:var(--muted);font-size:.95rem}
 input{font:inherit;width:100%;min-height:52px;border:1px solid var(--line);border-radius:12px;padding:0 14px;margin:8px 0 14px;background:#fff;letter-spacing:.3em}
 #msg{min-height:1.6em;color:var(--ember);font-size:.95rem}
-.bar{position:sticky;top:0;z-index:20;display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;padding:6px 14px;background:var(--cedar);color:#fff}
-.bar .brand{font-size:1.25rem;margin:0 auto 0 0}
-.bar a,.bar button{min-height:44px;padding:0 10px;border:0;border-radius:8px;background:none;color:#fff;font-weight:400;text-decoration:none;display:inline-flex;align-items:center}
-.bar a.on{background:rgba(255,255,255,.2)}.bar a:hover,.bar button:hover{background:rgba(255,255,255,.14)}
-.bar .who{opacity:.8;font-size:.9rem}
+#app{padding-bottom:calc(76px + env(safe-area-inset-bottom,0px))}
 main{max-width:860px;margin:0 auto;padding:22px 16px 60px}
 .eyebrow{color:var(--brass);font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:.8rem;margin:0}
 .lead{font-size:1.1rem}
@@ -52,7 +48,7 @@ ol,ul{padding-left:1.3em}li{margin:.4em 0}
 
 <section id="login" class="hidden">
   <div class="lcard">
-    <p class="brand">Sanctuaire</p>
+    <p class="brand">Sanctuaire Test</p>
     <p class="sub">Test site · Site de test</p>
     <p>Welcome. This is the private test site for Sanctuaire. Enter your PIN to continue.</p>
     <p>Bienvenue. Voici le site de test privé de Sanctuaire. Saisis ton code PIN pour continuer.</p>
@@ -64,19 +60,16 @@ ol,ul{padding-left:1.3em}li{margin:.4em 0}
 </section>
 
 <div id="app" class="hidden">
-  <nav class="bar" aria-label="Sanctuaire">
-    <span class="brand">Sanctuaire</span>
-    <a id="n-home" href="#/home"></a><a id="n-guides" href="#/guides"></a><a id="n-profile" href="#/profile"></a>
-    <button id="lang" type="button" aria-label="Language / Langue"></button>
-    <span class="who" id="who"></span>
-  </nav>
   <main id="view"></main>
 </div>
 
+<script>window.SBAR_HUB = 1;</script>
+<script src="hub-bar.js"></script>
 <script>
 'use strict';
 const SB = 'https://micrmjhtfkgatcztemmj.supabase.co';
 const KEY = 'sb_publishable_tbpcl9fXkbmza_-HEDTcNA_EQBYPsik';   // public by design, same as in the test pages
+const VERSION = '2.1.0';
 const HUB = 'sanctuaire-hub-v1', K1 = 'sanctuaire-t1-session-v1', K2 = 'sanctuaire-test2-session-v1', SEENK = 'sanctuaire-hub-seen-v1';
 const $ = (id) => document.getElementById(id);
 const esc = (x) => String(x == null ? '' : x).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -100,11 +93,12 @@ const I18N = {
     how: 'How this site works',
     s1: 'Sign in once', s1d: 'One PIN opens every test. No second login.',
     s2: 'Pick a test', s2d: 'The first time, its guide opens before the test.',
-    s3: 'Guide any time', s3d: 'The Guide link in the top bar reopens it.',
+    s3: 'Guide any time', s3d: 'The Guides tab at the bottom reopens it.',
     tests: 'The tests', open: 'Open', soon: 'Coming soon',
     start: 'Start with the guide', openTest: 'Open the test', guide: 'Guide',
     privacy: 'Only the two testers can sign in. The tests hold readable sentences, so keep exported reports private. The test database is deleted when testing ends.',
     steps: 'Steps', good: 'Good to know', adminOnly: 'For the admin', partnerOnly: 'For the French speaker',
+    testsTitle: 'Tests', testsIntro: 'Every test of the project. Open one to start or continue.', version: 'Version',
     guidesTitle: 'Guides', guidesIntro: 'Each test has a short guide. Open one at any time.',
     profileTitle: 'Your profile', name: 'Name', role: 'Role', roleAdmin: 'Admin (English speaker)', rolePartner: 'Partner (French speaker)',
     language: 'Language', sessions: 'Test sign-ins', on: 'Connected', off: 'Not connected: that test will ask for your PIN',
@@ -128,11 +122,12 @@ const I18N = {
     how: 'Comment fonctionne ce site',
     s1: 'Connecte-toi une fois', s1d: 'Un seul code PIN ouvre tous les tests. Pas de seconde connexion.',
     s2: 'Choisis un test', s2d: 'La première fois, son guide s’ouvre avant le test.',
-    s3: 'Le guide, à tout moment', s3d: 'Le lien Guide de la barre du haut le rouvre.',
+    s3: 'Le guide, à tout moment', s3d: 'L’onglet Guides, en bas, le rouvre.',
     tests: 'Les tests', open: 'Ouvert', soon: 'Bientôt',
     start: 'Commencer par le guide', openTest: 'Ouvrir le test', guide: 'Guide',
     privacy: 'Seules les deux personnes qui testent peuvent se connecter. Les tests contiennent des phrases lisibles : garde les rapports exportés privés. La base de test est supprimée à la fin des tests.',
     steps: 'Étapes', good: 'Bon à savoir', adminOnly: 'Pour l’admin', partnerOnly: 'Pour la francophone',
+    testsTitle: 'Tests', testsIntro: 'Tous les tests du projet. Ouvre-en un pour commencer ou continuer.', version: 'Version',
     guidesTitle: 'Guides', guidesIntro: 'Chaque test a un court guide. Ouvre-le quand tu veux.',
     profileTitle: 'Ton profil', name: 'Nom', role: 'Rôle', roleAdmin: 'Admin (anglophone)', rolePartner: 'Partenaire (francophone)',
     language: 'Langue', sessions: 'Connexions aux tests', on: 'Connecté', off: 'Non connecté : ce test te demandera ton code PIN',
@@ -218,13 +213,13 @@ async function rpc(fn, args) {
 }
 
 // ---- state ----
-let sess = null, lang = 'en';
+let sess = null, lang = 'en', bar = null;
 const L = () => I18N[lang];
 const live = (s) => s && s.at && Date.now() - s.at < 11 * 3600 * 1000;
 const seen = () => get(SEENK) || {};
 
 // ---- login ----
-function showLogin(m) { sess = null; $('app').classList.add('hidden'); $('login').classList.remove('hidden'); $('msg').textContent = m || ''; $('pin').value = ''; }
+function showLogin(m) { sess = null; if (bar) { bar.destroy(); bar = null; } $('app').classList.add('hidden'); $('login').classList.remove('hidden'); $('msg').textContent = m || ''; $('pin').value = ''; }
 async function doLogin() {
   const pin = $('pin').value.trim(), m = $('msg'); if (!pin) return;
   $('go').disabled = true; m.textContent = '…';
@@ -268,6 +263,10 @@ function vHome() {
       <div class="box"><b>3</b><h3>${l.s3}</h3><p>${l.s3d}</p></div></div>
     <h2>${l.tests}</h2><div class="cards">${TESTS.map(card).join('')}</div><p class="note">${l.privacy}</p>`;
 }
+function vTests() {
+  const l = L();
+  return `<h1>${l.testsTitle}</h1><p>${l.testsIntro}</p><div class="cards">${TESTS.map(card).join('')}</div>`;
+}
 function vGuides() {
   const l = L();
   return `<h1>${l.guidesTitle}</h1><p>${l.guidesIntro}</p><div class="cards">${TESTS.filter((t) => !t.soon).map((t) =>
@@ -289,7 +288,7 @@ function vProfile() {
     <dl class="kv"><dt>${l.name}</dt><dd>${esc(s.label)}</dd><dt>${l.role}</dt><dd>${s.role === 'admin' ? l.roleAdmin : l.rolePartner}</dd>
     <dt>${l.language}</dt><dd>${lang === 'en' ? 'English' : 'Français'}</dd>
     <dt>${l.sessions}</dt><dd><div class="ok">Test 1: ${l.on}</div>${st(!!get(K2), 'Test 2')}</dd></dl>
-    ${s.role === 'admin' ? `<p>${l.adminNote}</p>` : ''}<p class="note">${l.expiry}</p>
+    ${s.role === 'admin' ? `<p>${l.adminNote}</p>` : ''}<p class="note">${l.expiry}</p><p class="note">Sanctuaire Test · ${l.version} ${VERSION}</p>
     <p><button id="so" type="button" class="alt">${l.signout}</button></p>`;
 }
 
@@ -300,23 +299,19 @@ function route() {
   const t = TESTS.find((x) => x.id === id);
   if (r === 'open' && t && !t.soon) { if (seen()[id]) { location.href = t.url; } else { location.replace('#/guide/' + id); } return; }
   if (r === 'go' && t && !t.soon) { const m = seen(); m[id] = true; put(SEENK, m); location.href = t.url; return; }
-  const v = r === 'guides' ? vGuides() : r === 'guide' ? vGuide(id) : r === 'profile' ? vProfile() : vHome();
+  const v = r === 'tests' ? vTests() : r === 'guides' ? vGuides() : r === 'guide' ? vGuide(id) : r === 'profile' ? vProfile() : vHome();
   $('view').innerHTML = v; window.scrollTo(0, 0);
   const so = $('so'); if (so) so.onclick = signOut;
-  ['home', 'guides', 'profile'].forEach((k) => $('n-' + k).classList.toggle('on', r === k || (k === 'guides' && r === 'guide')));
+  if (bar) bar.setActive(r === 'guide' || r === 'guides' ? 'guides' : r === 'profile' ? 'profile' : r === 'tests' || r === 'open' ? 'tests' : 'home');
 }
-function chrome() {
-  const l = L();
-  $('n-home').textContent = l.home; $('n-guides').textContent = l.guides; $('n-profile').textContent = l.profile;
-  $('lang').textContent = l.switchTo; $('who').textContent = sess.label || '';
-  document.documentElement.lang = lang;
-}
+function chrome() { if (bar) bar.setLang(lang); document.documentElement.lang = lang; }
 function start() {
-  $('login').classList.add('hidden'); $('app').classList.remove('hidden'); chrome(); route();
+  $('login').classList.add('hidden'); $('app').classList.remove('hidden');
+  if (!bar) bar = SBar.mount({ base: '', lang, onLang: (x) => { lang = x; sess.lang = x; put(HUB, sess); chrome(); route(); } });
+  chrome(); route();
 }
 $('go').onclick = doLogin;
 $('pin').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
-$('lang').onclick = () => { lang = lang === 'en' ? 'fr' : 'en'; sess.lang = lang; put(HUB, sess); chrome(); route(); };
 window.addEventListener('hashchange', route);
 
 const saved = get(HUB);
