@@ -425,7 +425,6 @@ function buildChrome() {
   $('who').textContent = `${t('signedIn')}: ${t('role_' + session.role)}`;
   $('how').textContent = t('how');
   $('l-filter').textContent = t('filter');
-  $('pdf-msg').textContent = '';
   const f = $('filter');
   f.textContent = '';
   f.append(el('option', { value: 'all', text: t('fAll') }), el('option', { value: 'action', text: t('fAction') }));
