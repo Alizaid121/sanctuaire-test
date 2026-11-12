@@ -26,8 +26,10 @@
   function mount(o) {
     var base = o.base || '', lang = o.lang || 'en', guideHref = o.guideId ? '#/guide/' + o.guideId : '#/guides';
     if (!document.getElementById('sbar-css')) { var st = document.createElement('style'); st.id = 'sbar-css'; st.textContent = CSS; document.head.appendChild(st); }
+    var stg = window.SENV && SENV.staging;
     var top = document.createElement('header'); top.className = 'sbar-top';
-    top.innerHTML = '<span class="sbar-brand">Sanctuaire Test</span><button type="button" class="sbar-lang" aria-label="Language / Langue"></button>';
+    if (stg) top.style.background = '#8A5B1E';                    // staging is brass, live is green
+    top.innerHTML = '<span class="sbar-brand">Sanctuaire Test' + (stg ? ' · STAGING' : '') + '</span><button type="button" class="sbar-lang" aria-label="Language / Langue"></button>';
     var tabs = document.createElement('nav'); tabs.className = 'sbar-tabs'; tabs.setAttribute('aria-label', 'Sanctuaire Test');
     tabs.innerHTML = ORDER.map(function (k) {
       var h = k === 'guides' ? guideHref : '#/' + k;
